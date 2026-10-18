@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, Printer, Search, ShieldCheck, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, Printer, Search, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
 
 type Similar = { question: string; answer: string; explanation: string };
 type Mistake = {
@@ -68,20 +68,20 @@ function PrintSheet({ item }: { item: Mistake }) {
 function MistakeCard({ item, onSimilar, onPrint, onDelete, busy, showDelete = false }: {
   item: Mistake; onSimilar: (id: string, count: number) => void; onPrint: (item: Mistake) => void; onDelete: (id: string) => void; busy: boolean; showDelete?: boolean;
 }) {
-  const [answersOpen, setAnswersOpen] = useState(false);
+  const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
   const [similarCount, setSimilarCount] = useState("3");
-  useEffect(() => { if (item.similarQuestions.length > 0) setAnswersOpen(true); }, [item.similarQuestions]);
+  const answersOpen = userExpanded !== null ? userExpanded : (item.similarQuestions.length > 0);
   return <article className="question-card">
     <div className="question-top"><div className="question-tags"><SubjectPill subject={item.subject} /><span className="knowledge-tag">{item.knowledgePoint || "知识点待确认"}</span></div><span className="question-date"><CalendarDays size={14} />{formatDate(item.createdAt)}</span></div>
     <h3>{item.question}</h3>
     <div className="answer-grid"><div className="answer-box wrong"><span className="answer-label">我的答案</span><p>{item.incorrectAnswer || "图片中未能读清"}</p></div><div className="answer-box correct"><span className="answer-label">正确答案</span><p>{item.correctAnswer}</p></div></div>
     <div className="reasoning"><div className="reasoning-heading"><Lightbulb size={18} /><strong>解题思路</strong></div><p>{item.reasoning}</p></div>
-    <div className="question-footer"><span className="source-line"><FileImage size={14} />{item.sourceName} · 第 {item.pageNumber} 页</span><div className="question-actions"><button className="print-button" onClick={() => onPrint(item)}><Printer size={15} />打印错题</button>{showDelete && <button className="icon-action" title="移除这道错题" onClick={() => onDelete(item.id)}><Trash2 size={16} /></button>}<div className="similar-request"><label htmlFor={`similar-count-${item.id}`}>再给我出 <input id={`similar-count-${item.id}`} className="similar-count" type="number" min="1" max="5" step="1" inputMode="numeric" value={similarCount} onChange={event => { if (/^[1-5]?$/.test(event.target.value)) setSimilarCount(event.target.value); }} aria-label="类似题数量，1 到 5 道" /> 道类似题目</label><button className="similar-button" onClick={() => onSimilar(item.id, Number(similarCount))} disabled={busy || !/^[1-5]$/.test(similarCount)}>{busy ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}生成</button></div>{item.similarQuestions.length > 0 && <button className="similar-toggle" onClick={() => setAnswersOpen(!answersOpen)} aria-expanded={answersOpen}>{answersOpen ? "收起" : "查看"}已生成的 {item.similarQuestions.length} 道题<ChevronDown size={15} className={answersOpen ? "turn" : ""} /></button>}</div></div>
+    <div className="question-footer"><span className="source-line"><FileImage size={14} />{item.sourceName} · 第 {item.pageNumber} 页</span><div className="question-actions"><button className="print-button" onClick={() => onPrint(item)}><Printer size={15} />打印错题</button>{showDelete && <button className="icon-action" title="移除这道错题" onClick={() => onDelete(item.id)}><Trash2 size={16} /></button>}<div className="similar-request"><label htmlFor={`similar-count-${item.id}`}>再给我出 <input id={`similar-count-${item.id}`} className="similar-count" type="number" min="1" max="5" step="1" inputMode="numeric" value={similarCount} onChange={event => { if (/^[1-5]?$/.test(event.target.value)) setSimilarCount(event.target.value); }} aria-label="类似题数量，1 到 5 道" /> 道类似题目</label><button className="similar-button" onClick={() => onSimilar(item.id, Number(similarCount))} disabled={busy || !/^[1-5]$/.test(similarCount)}>{busy ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}生成</button></div>{item.similarQuestions.length > 0 && <button className="similar-toggle" onClick={() => setUserExpanded(!answersOpen)} aria-expanded={answersOpen}>{answersOpen ? "收起" : "查看"}已生成的 {item.similarQuestions.length} 道题<ChevronDown size={15} className={answersOpen ? "turn" : ""} /></button>}</div></div>
     {item.similarQuestions.length > 0 && answersOpen && <div className="similar-list"><div className="similar-title"><Sparkles size={17} />举一反三 · {item.similarQuestions.length} 道练习</div>{item.similarQuestions.map((similar, index) => <SimilarExercise item={similar} index={index} key={index} />)}</div>}
   </article>;
 }
 
-export default function Dashboard({ name, isAdmin }: { name: string; isAdmin: boolean }) {
+export default function Dashboard({ name }: { name: string }) {
   const [tab, setTab] = useState<Tab>("home");
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -195,7 +195,6 @@ export default function Dashboard({ name, isAdmin }: { name: string; isAdmin: bo
       <button className="brand" onClick={() => { setTab("home"); setMobileMenu(false); }}><span className="brand-mark"><BookOpen size={25} strokeWidth={2.2} /></span><span><strong>拾题</strong><small>把每一次错误，变成进步</small></span></button>
       <div className="sidebar-section-label">学习空间</div>
       <nav className="side-nav"><button className={tab === "home" ? "active" : ""} onClick={() => { setTab("home"); setMobileMenu(false); }}><span><Sparkles size={19} />学习工作台</span><ArrowRight size={16} /></button><button className={tab === "notebook" ? "active" : ""} onClick={() => { setTab("notebook"); setMobileMenu(false); }}><span><BookOpen size={19} />我的错题本</span><em>{mistakes.length}</em></button></nav>
-      {isAdmin && <><div className="sidebar-section-label subjects-label">管理</div><nav className="side-nav"><a className="side-link" href="/admin"><span><ShieldCheck size={19} />管理后台</span><ArrowRight size={16} /></a></nav></>}
       <div className="sidebar-section-label subjects-label">科目分类</div>
       <div className="subject-nav">{(subjects.length ? subjects : ["数学", "语文", "英语"]).slice(0, 6).map((item, index) => <button key={item} onClick={() => { setSubject(item); setTab("notebook"); setMobileMenu(false); }}><span className={`subject-dot ${subjectColors[item] || "sand"}`} />{item}<span className="subject-count">{subjects.length ? mistakes.filter(m => m.subject === item).length : index === 0 ? "" : ""}</span></button>)}</div>
       <div className="sidebar-spacer" />

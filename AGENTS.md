@@ -1,4 +1,4 @@
-# 拾题 · 智能错题本
+﻿# 拾题 · 智能错题本
 
 拍照上传试卷/作业 → DeepSeek 视觉模型识别错题 → 归档到错题本 → 按需生成举一反三练习题。
 
@@ -180,7 +180,7 @@ nginx 反代到 `127.0.0.1:3105`。两个入口：**https://study.zxai.studio/**
 
 - `.dev.vars`（600）—— `DEEPSEEK_API_KEY`、`SESSION_SECRET`（≥32 字符）。wrangler 会加载它。
 - `.deploy.vars`（600）—— `SHITI_BOOTSTRAP_USER` / `_PASSWORD` / `_NAME` / `_ID`。
-  只有 `deploy.sh` 读它，**故意与 `.dev.vars` 分开**，免得明文登录密码被 wrangler 装进
+  只有初始化/部署脚本读它，**故意与 `.dev.vars` 分开**，免得明文登录密码被 wrangler 装进
   worker 的 `env` 里。
 
 nginx 侧集中在 snippet `/etc/nginx/snippets/shiti-app.conf`（两个 server block 都 `include`
@@ -295,3 +295,13 @@ ls -l /tmp/mig        # 已是最新的迁移文件不会产出文件
 - `.gitattributes` 强制 LF，服务器上的 `deploy.sh` 才能正常执行。
 - `.dev.vars` / `.deploy.vars` 的值若含空格或 `#`，用双引号包起来——`deploy.sh` 用 shell
   `source` 读它们，裸值会被截断。
+
+## 本次后台升级文档
+
+- [实施范围](docs/specs/changes/admin-upgrade.md)
+- [交付与验收记录](docs/delivery/features/admin-upgrade/feature.md)
+- [后台架构](docs/architecture/overview/admin.md)
+
+## 默认账号环境配置
+
+见 [默认登录账号](docs/architecture/default-accounts.md)。本地 `.deploy.vars` 保存两组独立生成的管理员/普通用户凭据，使用 `npm run accounts:check` 检查，`npm run accounts:seed` 初始化缺少的账号。管理员用 SHITI_BOOTSTRAP_*，普通用户用 SHITI_DEFAULT_*。新增管理员使用 seed-user.mjs --admin，既有账号不会因重复播种被覆盖。

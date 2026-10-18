@@ -124,10 +124,20 @@ pass "users 表新列已就位"
 
 echo "==> 播种登录账号"
 # INSERT OR IGNORE 幂等；密码只经环境变量传给 node，不进命令行参数（ps 对所有人可见）
-node scripts/seed-user.mjs > /tmp/shiti-seed.sql
+node scripts/seed-user.mjs --admin > /tmp/shiti-seed.sql
 d1 --file /tmp/shiti-seed.sql > /dev/null
 rm -f /tmp/shiti-seed.sql
 pass "账号 $SHITI_BOOTSTRAP_USER 就绪"
+
+# 可选默认普通用户，与管理员使用不同账号和数据归属。
+if [ -n "${SHITI_DEFAULT_USER:-}${SHITI_DEFAULT_PASSWORD:-}" ]; then
+  [ "${SHITI_DEFAULT_USER:-}" != "$SHITI_BOOTSTRAP_USER" ] || fail "默认用户与管理员用户名不能相同"
+  [ "${SHITI_DEFAULT_ID:-shiti-user}" != "${SHITI_BOOTSTRAP_ID:-shiti}" ] || fail "默认用户与管理员 ID 不能相同"
+  node scripts/seed-user.mjs --default-user > /tmp/shiti-user-seed.sql
+  d1 --file /tmp/shiti-user-seed.sql > /dev/null
+  rm -f /tmp/shiti-user-seed.sql
+  pass "默认用户 $SHITI_DEFAULT_USER 就绪"
+fi
 
 # seed-user.mjs 用 INSERT OR IGNORE，已存在的账号不会因为部署而变成管理员，
 # 所以这里补一条。限定条件是「系统里一个管理员都没有」：既保证永远进得去后台，
@@ -146,6 +156,7 @@ pass "管理员账号已就位"
 BOOTSTRAP_USER="$SHITI_BOOTSTRAP_USER"
 BOOTSTRAP_PASSWORD="$SHITI_BOOTSTRAP_PASSWORD"
 unset SHITI_BOOTSTRAP_PASSWORD
+unset SHITI_DEFAULT_PASSWORD
 
 echo "==> 重启应用"
 if pm2 describe shiti-notebook > /dev/null 2>&1; then

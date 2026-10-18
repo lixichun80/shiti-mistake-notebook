@@ -1,0 +1,13 @@
+# 复制为 .deploy.vars 后填写；该文件仅供初始化/部署脚本读取。
+# 管理员登录 /login，登录后进入 /admin。
+SHITI_BOOTSTRAP_USER="admin"
+SHITI_BOOTSTRAP_PASSWORD=""
+SHITI_BOOTSTRAP_NAME="管理员"
+# 新增独立默认管理员。旧部署请保留已有 ID（历史账号通常为 shiti）。
+SHITI_BOOTSTRAP_ID="shiti-admin"
+
+# 普通用户登录 /login，进入错题本。
+SHITI_DEFAULT_USER="student"
+SHITI_DEFAULT_PASSWORD=""
+SHITI_DEFAULT_NAME="默认用户"
+SHITI_DEFAULT_ID="shiti-user"
