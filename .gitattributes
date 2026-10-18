@@ -1,0 +1,4 @@
+# Keep every text file LF in the repository so the Linux server checks out
+# shell scripts and source verbatim, regardless of the Windows working copy.
+* text=auto eol=lf
+*.sh text eol=lf
