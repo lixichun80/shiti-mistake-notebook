@@ -206,6 +206,23 @@ ssh server-198 "pgrep -f 'bash deploy.sh' >/dev/null && echo 仍在跑 || echo �
 
 **日志尾部出现 `==> 部署完成` 才算成功**（前面十几条 `✓` 是验证断言，见下面的「验证要求」）。
 
+### deploy.sh 会覆盖自己（踩过一次）
+
+`deploy.sh` 顶部的 `git reset --hard origin/main` 会把 `deploy.sh` 自己也换掉，而 bash 是
+**边读边执行**的：文件在运行中被替换之后，脚本剩余部分读到的可能是新旧两版拼接出来的内容。
+表现是「跑的是上一版的逻辑」，不报错、不崩溃，日志看起来完全合理。
+
+踩过一次：某次提交同时改了 `deploy.sh`（迁移段从 sed 换成 `apply-migration.mjs`），
+结果这次部署执行的还是旧版的 sed 逻辑，把 `0002` 判成「含 ALTER TABLE，无法幂等」当场中止，
+而拉下来的代码明明是对的。
+
+所以脚本在 reset 之后会比对自身哈希，变了就 `exec bash "$SELF"` 用新版本重新执行一遍
+（`SHITI_DEPLOY_REEXEC` 防重入）。**改动 deploy.sh 时不要删掉这段**，否则下一次
+「改部署脚本」的提交会静默地跑旧逻辑。
+
+同类陷阱：任何在运行中被自己覆盖的脚本都有这个问题。其它文件（`scripts/*.mjs` 等）
+是各自起进程时才读的，不受影响。
+
 `deploy.sh` 只重启应用、不碰 nginx。改了 `/etc/nginx/` 下的东西要**另行手动**
 `nginx -t && systemctl reload nginx`：先部署验证应用没问题，再 reload 切换流量，
 中间不会出现「两边都没防护」的窗口。

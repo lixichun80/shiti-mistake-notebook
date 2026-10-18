@@ -22,9 +22,27 @@ fail() { echo "  ✗ $1"; exit 1; }
 pass() { echo "  ✓ $1"; }
 
 echo "==> 拉取最新代码"
+# ⚠️ 下面这条 `git reset --hard` 会**覆盖 deploy.sh 自己**。bash 是边读边执行的，
+# 脚本文件在运行中被换掉之后，剩余部分读到的可能是新旧两版拼接出来的内容——
+# 表现为「跑的是上一版的逻辑」，而且不报错、不崩溃，只是行为莫名其妙。
+#
+# 踩过一次：某次提交同时改了 deploy.sh（迁移段从 sed 换成 apply-migration.mjs），
+# 结果这次部署执行的还是旧版的 sed 逻辑，把 0002 判成「含 ALTER TABLE，无法幂等」
+# 直接中止。日志看起来完全合理，实际跑的根本不是刚拉下来的代码。
+#
+# 所以拉完代码先比对脚本自身有没有变，变了就用新版本重新执行一遍自己。
+# SHITI_DEPLOY_REEXEC 是防重入哨兵。
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+before="$(sha256sum "$SELF" | cut -d' ' -f1)"
 git fetch --prune origin
 git reset --hard origin/main
 git log --oneline -1
+after="$(sha256sum "$SELF" | cut -d' ' -f1)"
+if [ "$before" != "$after" ] && [ "${SHITI_DEPLOY_REEXEC:-}" != "1" ]; then
+  echo "==> deploy.sh 本身有更新，用新版本重新执行"
+  export SHITI_DEPLOY_REEXEC=1
+  exec bash "$SELF"
+fi
 
 # 配置检查放在构建之前：构建要 5–8 分钟，缺配置没必要等那么久才知道
 echo "==> 检查部署配置"
