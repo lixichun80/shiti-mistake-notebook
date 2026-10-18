@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, Printer, Search, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, Printer, Search, ShieldCheck, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
 
 type Similar = { question: string; answer: string; explanation: string };
 type Mistake = {
@@ -81,7 +81,7 @@ function MistakeCard({ item, onSimilar, onPrint, onDelete, busy, showDelete = fa
   </article>;
 }
 
-export default function Dashboard({ name }: { name: string }) {
+export default function Dashboard({ name, isAdmin }: { name: string; isAdmin: boolean }) {
   const [tab, setTab] = useState<Tab>("home");
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
@@ -195,6 +195,7 @@ export default function Dashboard({ name }: { name: string }) {
       <button className="brand" onClick={() => { setTab("home"); setMobileMenu(false); }}><span className="brand-mark"><BookOpen size={25} strokeWidth={2.2} /></span><span><strong>拾题</strong><small>把每一次错误，变成进步</small></span></button>
       <div className="sidebar-section-label">学习空间</div>
       <nav className="side-nav"><button className={tab === "home" ? "active" : ""} onClick={() => { setTab("home"); setMobileMenu(false); }}><span><Sparkles size={19} />学习工作台</span><ArrowRight size={16} /></button><button className={tab === "notebook" ? "active" : ""} onClick={() => { setTab("notebook"); setMobileMenu(false); }}><span><BookOpen size={19} />我的错题本</span><em>{mistakes.length}</em></button></nav>
+      {isAdmin && <><div className="sidebar-section-label subjects-label">管理</div><nav className="side-nav"><a className="side-link" href="/admin"><span><ShieldCheck size={19} />管理后台</span><ArrowRight size={16} /></a></nav></>}
       <div className="sidebar-section-label subjects-label">科目分类</div>
       <div className="subject-nav">{(subjects.length ? subjects : ["数学", "语文", "英语"]).slice(0, 6).map((item, index) => <button key={item} onClick={() => { setSubject(item); setTab("notebook"); setMobileMenu(false); }}><span className={`subject-dot ${subjectColors[item] || "sand"}`} />{item}<span className="subject-count">{subjects.length ? mistakes.filter(m => m.subject === item).length : index === 0 ? "" : ""}</span></button>)}</div>
       <div className="sidebar-spacer" />

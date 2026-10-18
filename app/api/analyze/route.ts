@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { authenticate } from "@/lib/api-guard";
 import { aiConfigured, analyzePages } from "@/lib/ai";
 
 export const runtime = "edge";
@@ -14,8 +14,9 @@ function toBase64(bytes: Uint8Array) {
 }
 
 export async function POST(request: Request) {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "请先登录后再上传" }, { status: 401 });
+  const auth = await authenticate();
+  if ("response" in auth) return auth.response;
+  const user = auth.user;
   if (!aiConfigured()) return Response.json({ error: "AI 分析服务尚未配置，暂时无法处理图片" }, { status: 503 });
   if (!env.DB || !env.BUCKET) return Response.json({ error: "存储服务暂不可用" }, { status: 503 });
 

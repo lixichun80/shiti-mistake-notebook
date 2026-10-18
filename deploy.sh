@@ -58,23 +58,51 @@ test -f "$REPO/$WRANGLER_CFG" || fail "wrangler 配置缺失"
 d1() { npx wrangler d1 execute "$DB" --config "$WRANGLER_CFG" --local --persist-to "$PERSIST" "$@"; }
 
 echo "==> 应用数据库迁移"
-# 迁移文件保持原样，执行前用 sed 改写成可重复执行的形式。
-# 只覆盖 CREATE TABLE / CREATE [UNIQUE] INDEX：SQLite 的 ALTER TABLE 没有
-# IF NOT EXISTS，遇到就中止，免得第二次部署静默失败却看不出来。
+# drizzle/*.sql 每次部署都全量重放（没有「已应用」记录表），所以每条语句都必须幂等。
+# CREATE TABLE / CREATE INDEX 由 apply-migration.mjs 补上 IF NOT EXISTS；
+# ALTER TABLE ADD COLUMN 没有 IF NOT EXISTS 可用，靠「先导出库结构，列已存在就丢掉这条」补。
+# 代价是迁移文件**只能追加，不能改**——改了已发布的文件，结构快照跟它对不上，
+# 判断就会失准。要改结构请加新文件。详见 AGENTS.md。
 ls drizzle/*.sql > /dev/null 2>&1 || fail "drizzle/ 下没有迁移文件"
+
+SCHEMA_JSON=/tmp/shiti-schema.json
+MIG_DIR=/tmp/shiti-mig
+rm -rf "$MIG_DIR"
+mkdir -p "$MIG_DIR"
+
+export SHITI_D1_DB="$DB" SHITI_WRANGLER_CFG="$WRANGLER_CFG" SHITI_PERSIST="$PERSIST"
+node scripts/dump-schema.mjs > "$SCHEMA_JSON" || fail "导出库结构失败"
+node scripts/apply-migration.mjs --schema "$SCHEMA_JSON" --out "$MIG_DIR" drizzle/*.sql \
+  || fail "迁移预处理失败（见上面的原因）"
+
 for migration in drizzle/*.sql; do
-  if grep -qi 'ALTER TABLE' "$migration"; then
-    fail "$migration 含 ALTER TABLE，sed 无法改成幂等，需要人工处理"
+  prepared="$MIG_DIR/$(basename "$migration")"
+  # 没有待执行语句就不送去 d1，省一次 workerd 启动
+  if [ ! -s "$prepared" ]; then
+    pass "$migration 已是最新"
+    continue
   fi
-  sed -e 's/--> statement-breakpoint//' \
-      -e 's/^CREATE TABLE `/CREATE TABLE IF NOT EXISTS `/' \
-      -e 's/^CREATE UNIQUE INDEX `/CREATE UNIQUE INDEX IF NOT EXISTS `/' \
-      -e 's/^CREATE INDEX `/CREATE INDEX IF NOT EXISTS `/' \
-      "$migration" > /tmp/shiti-mig.sql
-  d1 --file /tmp/shiti-mig.sql > /dev/null
+  d1 --file "$prepared" > /dev/null || fail "$migration 执行失败"
   pass "已应用 $migration"
 done
-rm -f /tmp/shiti-mig.sql
+rm -rf "$MIG_DIR"
+
+# 复查新列真的落库了。apply-migration 是「看结构决定跳过哪些 ADD COLUMN」，
+# 万一结构导出拿错了库，它会把该执行的 ALTER 也跳掉，而且**不报错**——那样
+# 库就少一列，后面所有断言照样全绿，直到线上登录才炸。这条断言专门堵这个洞。
+node scripts/dump-schema.mjs > "$SCHEMA_JSON" || fail "复查库结构失败"
+SHITI_SCHEMA_JSON="$SCHEMA_JSON" node -e '
+const fs = require("node:fs");
+const schema = JSON.parse(fs.readFileSync(process.env.SHITI_SCHEMA_JSON, "utf8"));
+const missing = ["role", "status", "session_epoch", "last_login_at"]
+  .filter((col) => !(schema.users || []).includes(col));
+if (missing.length) {
+  console.error("users 表缺少列：" + missing.join("、"));
+  process.exit(1);
+}
+' || fail "迁移没有真正生效，users 表缺少新列"
+rm -f "$SCHEMA_JSON"
+pass "users 表新列已就位"
 
 echo "==> 播种登录账号"
 # INSERT OR IGNORE 幂等；密码只经环境变量传给 node，不进命令行参数（ps 对所有人可见）
@@ -82,6 +110,19 @@ node scripts/seed-user.mjs > /tmp/shiti-seed.sql
 d1 --file /tmp/shiti-seed.sql > /dev/null
 rm -f /tmp/shiti-seed.sql
 pass "账号 $SHITI_BOOTSTRAP_USER 就绪"
+
+# seed-user.mjs 用 INSERT OR IGNORE，已存在的账号不会因为部署而变成管理员，
+# 所以这里补一条。限定条件是「系统里一个管理员都没有」：既保证永远进得去后台，
+# 又不会覆盖管理员在后台主动做的降级（只要还有别的 admin 在，这条就什么都不做）。
+SHITI_BOOTSTRAP_ID="${SHITI_BOOTSTRAP_ID:-shiti}"
+case "$SHITI_BOOTSTRAP_ID" in
+  "" | *[!A-Za-z0-9_-]*) fail "SHITI_BOOTSTRAP_ID 含非法字符：$SHITI_BOOTSTRAP_ID" ;;
+esac
+printf "UPDATE users SET role='admin' WHERE id='%s' AND NOT EXISTS (SELECT 1 FROM users WHERE role='admin');\n" \
+  "$SHITI_BOOTSTRAP_ID" > /tmp/shiti-admin.sql
+d1 --file /tmp/shiti-admin.sql > /dev/null
+rm -f /tmp/shiti-admin.sql
+pass "管理员账号已就位"
 
 # 播种完就不再需要明文密码；留着会被 pm2 --update-env 带进应用进程环境
 BOOTSTRAP_USER="$SHITI_BOOTSTRAP_USER"
@@ -133,7 +174,27 @@ pass "伪造 oai-* 请求头被拒"
 
 body=$(mktemp)
 jar=$(mktemp)
-trap 'rm -f "$body" "$jar"' EXIT
+testjar=$(mktemp)
+TEST_USER=deploycheck
+TEST_PASSWORD="deploycheck-$(date +%s)"
+
+# 下面的注册验证会**真的建一个账号**。无论成功还是中途 fail 退出，都必须清掉，
+# 否则它会一直挂在客户的后台账号列表里，而且每部署一次就多一个。
+# 直接走 SQL 而不是调删除接口：失败退出时手里未必有可用的管理员 cookie。
+cleanup() {
+  rm -f "$body" "$jar" "$testjar"
+  # 顺序不能变，也不能把 users 塞进上面那个循环：users 没有 user_id 列，
+  # 多一条报错语句会让 db.batch() 整个事务回滚，三条都白删。
+  : > /tmp/shiti-testclean.sql
+  for table in mistakes uploads; do
+    printf "DELETE FROM %s WHERE user_id IN (SELECT id FROM users WHERE username='%s');\n" \
+      "$table" "$TEST_USER" >> /tmp/shiti-testclean.sql
+  done
+  printf "DELETE FROM users WHERE username='%s';\n" "$TEST_USER" >> /tmp/shiti-testclean.sql
+  d1 --file /tmp/shiti-testclean.sql > /dev/null 2>&1 || true
+  rm -f /tmp/shiti-testclean.sql
+}
+trap cleanup EXIT
 
 SHITI_TEST_USER="$BOOTSTRAP_USER" SHITI_TEST_PASSWORD="definitely-not-the-password" \
   node -e 'process.stdout.write(JSON.stringify({username:process.env.SHITI_TEST_USER,password:process.env.SHITI_TEST_PASSWORD}))' > "$body"
@@ -161,5 +222,79 @@ if ! printf '%s' "$headers" | grep -qiE '^set-cookie: *shiti_session=;.*(max-age
   fail "登出未清除会话 cookie"
 fi
 pass "登出清除会话 cookie"
+
+# 回归测试：这次改动给会话载荷加了 ep 字段。老 cookie 里没有这个字段，必须按 0 处理
+# （见 lib/auth.ts 的 normalizeEpoch）。要是写成直接比对 payload.ep === row.session_epoch，
+# undefined !== 0 恒真，**所有存量登录会在发版瞬间全部失效**——而上面那些断言一条都不会变红，
+# 因为它们用的都是这次新签发的 cookie。这里手工签一张「没有 ep 的旧 cookie」验一下。
+LEGACY_COOKIE=$(SHITI_SECRET="$SESSION_SECRET" SHITI_UID="$SHITI_BOOTSTRAP_ID" node -e '
+const { createHmac } = require("node:crypto");
+const b64url = (buffer) => Buffer.from(buffer).toString("base64")
+  .replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const payload = {
+  v: 1,
+  uid: process.env.SHITI_UID,
+  name: "legacy-check",
+  exp: Math.floor(Date.now() / 1000) + 3600,
+};
+const body = b64url(JSON.stringify(payload));
+const signature = createHmac("sha256", process.env.SHITI_SECRET).update(body).digest();
+process.stdout.write(body + "." + b64url(signature));
+')
+code=$(curl -s -o /dev/null -w '%{http_code}' -H "Cookie: shiti_session=$LEGACY_COOKIE" \
+  "http://127.0.0.1:$PORT/api/mistakes")
+[ "$code" = "200" ] || fail "不含 ep 的旧格式会话被拒（$code），存量登录会全部失效"
+pass "旧格式会话 cookie 仍然有效"
+
+echo "==> 验证注册与后台"
+
+# 注册页必须匿名可访问，理由同 /login
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/register")
+[ "$code" = "200" ] || fail "/register 匿名访问返回 $code，应为 200"
+pass "/register 匿名可访问"
+
+SHITI_TEST_USER="$TEST_USER" SHITI_TEST_PASSWORD="$TEST_PASSWORD" \
+  node -e 'process.stdout.write(JSON.stringify({username:process.env.SHITI_TEST_USER,password:process.env.SHITI_TEST_PASSWORD,displayName:"部署验证"}))' > "$body"
+code=$(curl -s -o /dev/null -w '%{http_code}' -c "$testjar" -H 'Content-Type: application/json' \
+  --data-binary "@$body" "http://127.0.0.1:$PORT/api/auth/register")
+[ "$code" = "200" ] || fail "注册接口返回 $code，应为 200"
+grep -q 'shiti_session' "$testjar" || fail "注册成功却没有下发 shiti_session cookie"
+pass "注册成功并下发会话"
+
+# 唯一性靠 users_username_unique 索引兜底，不是「先查再插」——那样有竞态
+code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+  --data-binary "@$body" "http://127.0.0.1:$PORT/api/auth/register")
+[ "$code" = "409" ] || fail "重复用户名注册返回 $code，应为 409"
+pass "重复用户名被拒"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$testjar" "http://127.0.0.1:$PORT/api/mistakes")
+[ "$code" = "200" ] || fail "新注册账号读错题本返回 $code，应为 200"
+pass "新账号可读错题本"
+
+# 后台接口必须区分「没登录」（401）和「登录了但不是管理员」（403）。
+# 403 这条尤其别删：只判有没有登录、忘了判 role 的话，任何注册用户都能删别人的号。
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/admin/users")
+[ "$code" = "401" ] || fail "匿名访问 /api/admin/users 返回 $code，应为 401"
+pass "后台接口匿名被拒"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$testjar" "http://127.0.0.1:$PORT/api/admin/users")
+[ "$code" = "403" ] || fail "普通用户访问 /api/admin/users 返回 $code，应为 403（越权！）"
+pass "后台接口普通用户被拒（403）"
+
+list=$(curl -s -b "$jar" "http://127.0.0.1:$PORT/api/admin/users")
+case "$list" in
+  *"$TEST_USER"*) pass "管理员可读取账号列表" ;;
+  *) fail "管理员读到的列表里没有刚注册的 $TEST_USER：$list" ;;
+esac
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$jar" "http://127.0.0.1:$PORT/admin")
+[ "$code" = "200" ] || fail "管理员访问 /admin 返回 $code，应为 200"
+pass "/admin 管理员可访问"
+
+# 后台页面本身也要挡住普通用户：requireAdmin 走的是 redirect，不是 403，
+# 所以断言「不是 200」而不是具体状态码。用 -L 会跟到 /login 变成 200，别加。
+code=$(curl -s -o /dev/null -w '%{http_code}' -b "$testjar" "http://127.0.0.1:$PORT/admin")
+[ "$code" != "200" ] || fail "普通用户竟能打开 /admin 页面（200），越权"
+pass "/admin 普通用户被挡"
 
 echo "==> 部署完成"

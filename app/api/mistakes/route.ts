@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { authenticate } from "@/lib/api-guard";
 
 type Row = {
   id: string; upload_id: string; subject: string; question: string;
@@ -9,8 +9,9 @@ type Row = {
 };
 
 export async function GET() {
-  const user = await getChatGPTUser();
-  if (!user) return Response.json({ error: "请先登录" }, { status: 401 });
+  const auth = await authenticate();
+  if ("response" in auth) return auth.response;
+  const user = auth.user;
   if (!env.DB) return Response.json({ error: "存储服务暂不可用" }, { status: 503 });
   const { results } = await env.DB.prepare("SELECT id, upload_id, subject, question, incorrect_answer, correct_answer, reasoning, knowledge_point, page_number, source_name, similar_questions, created_at FROM mistakes WHERE user_id = ? ORDER BY created_at DESC").bind(user.userId).all<Row>();
   const mistakes = results.map(row => ({

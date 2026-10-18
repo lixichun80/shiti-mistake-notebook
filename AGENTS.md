@@ -38,8 +38,40 @@ npx wrangler dev --config dist/server/wrangler.json --local \
 - 会话是**无状态签名 cookie**（`shiti_session`）：`base64url(载荷).base64url(HMAC-SHA256)`，
   密钥取 `env.SESSION_SECRET`，有效期 30 天。没有服务端会话表，所以**登出只是删掉浏览器
   cookie，旧 token 在过期前密码学上依然有效**（家庭自用可接受）。
-- 页面：`/login`（`app/login/`）。未登录访问 `/` 会 `redirect` 到 `/login?return_to=…`。
-- 接口：`POST /api/auth/login`、`POST /api/auth/logout`。
+- 页面：`/login`（`app/login/`）、`/register`（`app/register/`）。未登录访问 `/` 会 `redirect` 到
+  `/login?return_to=…`。
+- 接口：`POST /api/auth/login`、`POST /api/auth/register`、`POST /api/auth/logout`。
+
+### cookie 只证明「你是谁」，权限每次回查库
+
+`readSession()`（`lib/auth.ts`）**只验证签名**，不代表这个用户现在还有效——账号可能已被删除、
+被停用，或密码被重置过。要拿当前状态必须走 `getChatGPTUser()` / `getSessionUser()`
+（`app/chatgpt-auth.ts`），它会用 cookie 里的 `uid` 回查一次 `users` 行，用**库里的**
+`role` / `status` / `session_epoch` 做判定：
+
+| 情况 | 结果 |
+|---|---|
+| 行不存在（已删除） | 未登录 |
+| `status != 'active'` | 未登录 |
+| `payload.ep != session_epoch` | 未登录（密码被重置过 / 被停用过） |
+| `env.DB` 未绑定或查询抛错 | **未登录**（fail closed，绝不 fail open） |
+
+因此**不要**用 `readSession()` 做「已登录就跳走」的判断——会造出重定向环：cookie 有效 → 跳首页
+→ 首页回查发现已停用 → 跳回登录页 → 登录页又只看 cookie → 死循环。`app/page.tsx` 和
+`app/login/page.tsx` 都用 `getSessionUser()` 就是这个原因。
+
+`session_epoch` 在**重置密码**和**停用账号**时递增，用来立刻踢掉该用户手上所有 cookie
+（无状态会话没有别的办法做到「停用即时生效」，而后台最核心的功能就是停用）。
+
+**向后兼容是硬约束**：老 cookie 的载荷里没有 `ep` 字段。`normalizeEpoch()` 把缺失按 `0` 处理，
+存量行的 `session_epoch` 默认值也是 `0`。若改成直接比 `payload.ep === row.session_epoch`，
+`undefined !== 0` 恒真，**所有存量登录会在发版瞬间全部失效**，而 `deploy.sh` 里其他断言一条都
+不会变红（它们用的都是新签发的 cookie）。`deploy.sh` 里那条「手工签一张没有 `ep` 的旧 cookie」
+的断言就是专门堵这个洞的，别删。
+
+页面侧权限用 `requireAdmin(returnTo)`：未登录送回登录页，登录了但不是管理员 `redirect("/")`
+（不是 401——页面场景要给人留退路）。接口侧用 `lib/api-guard.ts` 的 `authenticate()` /
+`authenticateAdmin()`：未登录 **401**、非管理员 **403**、存储不可用 **503**。两者刻意不同。
 
 ### 平台请求头那条老路
 
@@ -52,6 +84,9 @@ nginx 也会把这四个头置空，但那是第二道防线——配置改错�
 设了等于任何人加个请求头就能进后台。`deploy.sh` 会拒绝部署。
 
 ### 加账号 / 改密码
+
+日常的账号管理走**后台**（`/admin`）：新建、停用、重置密码、设/取消管理员、删除。
+下面这套手工流程只在「后台进不去」时用——比如管理员密码忘了，或者管理员账号被自己锁死了。
 
 播种用 `scripts/seed-user.mjs`，读 `SHITI_BOOTSTRAP_USER/PASSWORD/NAME/ID` 环境变量，
 输出一条 `INSERT OR IGNORE`。因为 `OR IGNORE`，**改了 `.deploy.vars` 里的密码再部署
@@ -70,15 +105,69 @@ rm -f /tmp/pw.sql
 新增家人账号同理，换一组 `SHITI_BOOTSTRAP_USER` / `_NAME` / `_ID` 跑一次即可，
 每个账号有各自独立的错题本。
 
+## 注册与后台
+
+### 注册是完全开放的，这是有意的
+
+`POST /api/auth/register`（`app/api/auth/register/route.ts`）+ 页面 `/register`。**没有**邀请码、
+没有每日额度、没有注册开关——用户是面对面交付客户，注册即等于已成为客户。
+
+后果要说清楚：**站点在公网上，任何能访问该域名的人注册后都能调 `/api/analyze` 消耗
+DeepSeek 额度。** 事后唯一的止损手段是管理员在后台停用/删除账号，所以「停用立刻生效」
+（见上面的 `session_epoch`）不是锦上添花，是这套取舍能成立的前提。
+
+注册接口写库 + 跑 60 万次 PBKDF2，比登录更容易被刷，所以 nginx 侧
+（`/etc/nginx/conf.d/shiti-limit.conf` 的 `map $uri $shiti_login_key`）把它和
+`/api/auth/login` 放进同一个限流区。这是沿用既有做法，不是新增防护。
+
+用户名规则和密码长度在 `lib/credentials.ts` 里集中定义，注册接口和后台建号接口共用，
+改规则只改这一处。唯一性靠 `users_username_unique` 索引兜底（捕获约束冲突返回 409），
+**不要改成「先查再插」**——那样有竞态。
+
+### 后台
+
+`/admin`（`app/admin/`）+ `app/api/admin/users`、`app/api/admin/users/[id]`。
+页面用独立外壳，不复用 dashboard 的侧栏（那个外壳跟 dashboard 的 tab 状态强耦合）。
+接口鉴权走 `lib/api-guard.ts`：未登录 401、非管理员 403、存储不可用 503。
+
+**自锁保护**（`[id]/route.ts`）：不能停用/删除/降级自己。没有这几条，一次误操作就能把
+最后一个管理员关在门外，而且没有邮箱、没有找回密码，救不回来。
+
+**删除账号是不可恢复的破坏性操作**，会连带删掉该用户的全部 `mistakes`、`uploads` 和
+R2 里的原图。代码里的顺序是**先删 R2 对象、再删库里的行**，不能反——反过来的话，
+删完 `uploads` 就再也查不到 `file_keys` 了，那些图片会永远留在桶里成为孤儿。
+R2 删除失败时**中止整个操作**（账号留着让管理员重试），不要改成「继续删库」。
+
+**不做用户自助改密码**（用户明确决定）：没有「我的账号」页，忘记密码只能找管理员重置。
+登录页文案里写明了这一点，免得用户到处找入口。
+
+### 引导管理员
+
+`deploy.sh` 在播种之后跑一条 `UPDATE users SET role='admin' WHERE id='<SHITI_BOOTSTRAP_ID>'
+AND NOT EXISTS (SELECT 1 FROM users WHERE role='admin')`。限定「系统里一个管理员都没有」
+是刻意的：既保证永远进得去后台，又不会覆盖管理员在后台主动做的降级。
+`SHITI_BOOTSTRAP_ID` 默认 `shiti`，含非法字符会直接中止部署。
+
 ## 存储
 
 - `env.DB`（D1）与 `env.BUCKET`（R2）由 `dist/server/wrangler.json` 声明。
   自托管用 Miniflare 本地模拟，数据在 `.wrangler/state`，**不需要 Cloudflare 账号**。
-- `env.DEEPSEEK_API_KEY`、`env.SESSION_SECRET` 来自仓库根目录的 `.dev.vars`。wrangler 会自动加载
-  cwd 下的这个文件名，`ecosystem.config.cjs` 里另有一条 `--env-file` 作双保险。
-  **本地想复现同样的绑定，就得把文件叫 `.dev.vars`**——`--env-file` 传别的文件名时，值不会
-  进到 worker 的 `env` 里（踩过一次：本地 `--env-file .dev.vars.local` 让 `SESSION_SECRET`
-  变成 undefined，登录接口 503）。
+- `env.DEEPSEEK_API_KEY`、`env.SESSION_SECRET` 来自仓库根目录的 `.dev.vars`，由
+  `ecosystem.config.cjs` 的 `--env-file` 加载。
+
+  ⚠️ **wrangler 是按「配置文件所在目录」解析 `.dev.vars` 的，不是 cwd。** 因为启动命令用的是
+  `--config dist/server/wrangler.json`，只把文件放在仓库根目录**不会生效**——worker 拿不到
+  `SESSION_SECRET`，注册/登录返回 503「服务端未配置会话密钥」，`/api/status` 报
+  `aiConfigured:false`。启动日志里那行 `Using secrets defined in <路径>` 才是判断依据，
+  它显示的路径不对就说明没加载上。
+
+  本地要复现生产绑定，把文件放到配置文件旁边（`cp .dev.vars dist/server/.dev.vars`），
+  或者 `--env-file` 传绝对路径。生产因为传的是绝对路径 `/opt/shiti-mistake-notebook/.dev.vars`，
+  不受这个规则影响。
+
+  另外：`.dev.vars` 必须是**这个文件名**。wrangler 对别的名字有特殊解释（会当成
+  `--env <name>` 对应的环境文件），值进不到 worker 的 `env` 里——踩过一次，本地
+  `--env-file .dev.vars.local` 让 `SESSION_SECRET` 变成 undefined。
 - 表结构在 `db/schema.ts`，迁移在 `drizzle/`。
 
 ## 部署
@@ -115,15 +204,44 @@ ssh server-198 "pgrep -f 'bash deploy.sh' >/dev/null && echo 仍在跑 || echo �
   tail -20 /tmp/shiti-deploy.log"
 ```
 
-**日志尾部出现 `==> 部署完成` 才算成功**（前面 8 条 `✓` 是验证断言）。
+**日志尾部出现 `==> 部署完成` 才算成功**（前面十几条 `✓` 是验证断言，见下面的「验证要求」）。
 
 `deploy.sh` 只重启应用、不碰 nginx。改了 `/etc/nginx/` 下的东西要**另行手动**
 `nginx -t && systemctl reload nginx`：先部署验证应用没问题，再 reload 切换流量，
 中间不会出现「两边都没防护」的窗口。
 
-迁移用 sed 改写成 `CREATE TABLE IF NOT EXISTS` / `CREATE [UNIQUE] INDEX IF NOT EXISTS`，
-所以可重复执行；**迁移文件里出现 `ALTER TABLE` 会直接中止**（SQLite 没有
-`ADD COLUMN IF NOT EXISTS`），那种迁移需要人工处理或另建幂等方案。
+### 迁移机制
+
+`drizzle/*.sql` **每次部署都全量重放**（没有「已应用迁移」记录表），所以每条语句都必须幂等。
+SQLite 没有 `ADD COLUMN IF NOT EXISTS`，靠两个脚本补：
+
+- `scripts/dump-schema.mjs` —— 导出当前库结构（表 → 列名）到 stdout 的 JSON，其余输出走 stderr。
+  用 `process.execPath` + `node_modules/wrangler/bin/wrangler.js` 起 wrangler：Windows 上
+  `spawnSync("npx.cmd", …)` 不加 `shell:true` 会直接起不来（`status === null`）。
+- `scripts/apply-migration.mjs` —— 读「库结构 + 迁移文件」，输出这次**真正需要执行**的 SQL：
+  - `CREATE TABLE` / `CREATE [UNIQUE] INDEX` → 补上 `IF NOT EXISTS`；
+  - `ALTER TABLE <t> ADD [COLUMN] <c>` → 列已存在就丢掉这条，不存在才保留；
+  - **其它任何形态的 `ALTER TABLE`（`DROP COLUMN` / `RENAME` / `ALTER COLUMN`）→ 直接退出 1**，
+    这些没法幂等，必须人工介入。这个保护是有意的，别为了「让它跑通」把它删掉。
+
+同一轮里对 `(表, 列)` 去重，所以两个迁移加同一列不会重复输出。
+
+**代价：迁移文件只能追加，不能改。** 改了已发布的文件，结构快照就跟它对不上，
+「列已存在就跳过」的判断会失准。要改结构请加新文件。
+
+`deploy.sh` 迁移后还有一条复查断言：重新导出结构，确认 `users` 的 `role` / `status` /
+`session_epoch` / `last_login_at` 真的在。因为 apply-migration 是「看结构决定跳过什么」，
+万一结构导出拿错了库，它会把该执行的 ALTER 也跳掉而且**不报错**——那样库就少一列，
+后面所有断言照样全绿，直到线上登录才炸。
+
+本地验证幂等性：
+
+```bash
+SHITI_D1_DB=site-creator-d1 SHITI_WRANGLER_CFG=dist/server/wrangler.json \
+  SHITI_PERSIST=.wrangler/state node scripts/dump-schema.mjs > /tmp/schema.json
+node scripts/apply-migration.mjs --schema /tmp/schema.json --out /tmp/mig drizzle/*.sql
+ls -l /tmp/mig        # 已是最新的迁移文件不会产出文件
+```
 
 ## 验证要求
 
@@ -136,6 +254,19 @@ ssh server-198 "pgrep -f 'bash deploy.sh' >/dev/null && echo 仍在跑 || echo �
 5. 错误密码登录返回 401，正确密码返回 200 并下发 `shiti_session`
 6. 带会话 cookie 请求 `/api/mistakes` 返回 200
 7. 登出响应清除了 `shiti_session` cookie
+8. **手工签一张没有 `ep` 字段的旧格式 cookie，请求 `/api/mistakes` 仍返回 200**——
+   这是「发版瞬间所有存量登录失效」的唯一守卫，别删
+9. `/register` 匿名可访问（200）
+10. 注册接口能建号并下发会话；重复用户名返回 **409**
+11. 新注册账号能读自己的 `/api/mistakes`（200）
+12. 匿名访问 `/api/admin/users` 返回 **401**
+13. **普通账号访问 `/api/admin/users` 返回 403**（越权回归测试，和 4 同等重要）
+14. 管理员能读到账号列表（含刚注册的那个），能打开 `/admin`（200）
+15. 普通账号打开 `/admin` **不是** 200
+
+注册相关的断言会真的建一个 `deploycheck` 账号，`deploy.sh` 里挂了 `trap cleanup EXIT`
+在退出时清掉（成功失败都清）。改那段时**别把 cleanup 弄丢**，否则每部署一次后台就多一个
+测试账号。清理走 SQL 而不是删账号接口：失败退出时未必有可用的管理员 cookie。
 
 域名相关的验证（DNS 解析、证书、公网可达）一律在服务器上做——本地 Clash 会把域名解析成
 `198.18.0.25` 的 fake-IP，本地结果没有参考价值。

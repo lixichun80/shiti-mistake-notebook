@@ -9,5 +9,5 @@ export default async function Home() {
   // 未登录不再渲染「访客版」首页，直接去登录页 —— 两套 UI 只会各自腐化
   if (!user) redirect(chatGPTSignInPath("/"));
 
-  return <Dashboard name={user.fullName || "同学"} />;
+  return <Dashboard name={user.fullName || "同学"} isAdmin={user.role === "admin"} />;
 }

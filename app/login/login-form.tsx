@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { ArrowRight, BookOpen, LoaderCircle } from "lucide-react";
 
 export default function LoginForm({ returnTo }: { returnTo: string }) {
@@ -109,8 +110,12 @@ export default function LoginForm({ returnTo }: { returnTo: string }) {
           </button>
         </form>
 
+        <p className="login-switch">
+          还没有账号？<Link href="/register" className="login-link">立即注册</Link>
+        </p>
+
         <p className="login-footnote">
-          错题只对登录的家人可见，登录状态保留 30 天。
+          错题只对登录的账号可见，登录状态保留 30 天。忘记密码请联系管理员重置。
         </p>
       </main>
     </div>

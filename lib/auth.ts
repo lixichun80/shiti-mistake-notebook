@@ -112,9 +112,29 @@ export async function burnPasswordTime(plain: string): Promise<void> {
  * 会话
  * ------------------------------------------------------------------ */
 
-export type SessionUser = { userId: string; fullName: string | null };
+export type SessionUser = {
+  userId: string;
+  fullName: string | null;
+  /**
+   * 签发这张 cookie 时用户的会话版本号。校验方要拿它跟 `users.session_epoch` 比：
+   * 不相等说明管理员在这张 cookie 签发之后重置了密码或停用了账号，应当作废。
+   */
+  epoch: number;
+};
 
-type SessionPayload = { v: 1; uid: string; name: string; exp: number };
+type SessionPayload = { v: 1; uid: string; name: string; exp: number; ep?: number };
+
+/**
+ * 把载荷里的 `ep` 归一成数字。
+ *
+ * 这次改动之前签发的 cookie 都没有 `ep` 字段，读到的是 `undefined`；而
+ * `undefined === 0` 是 false —— 直接拿去跟库里的 `session_epoch` 比，
+ * **所有存量登录会在发版瞬间全部失效**。存量行的 `session_epoch` 默认值也是 0，
+ * 两边都按 0 处理正好对齐。
+ */
+function normalizeEpoch(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
 
 async function hmacKey(): Promise<CryptoKey> {
   const secret = env.SESSION_SECRET;
@@ -138,6 +158,7 @@ export async function createSessionToken(user: SessionUser): Promise<string> {
     uid: user.userId,
     name: user.fullName ?? user.userId,
     exp: Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS,
+    ep: normalizeEpoch(user.epoch),
   };
   // 签名覆盖 base64url 之后的原字符串，而不是重新序列化的对象 ——
   // 否则 JSON 键序或空白差异会让验签莫名失败。
@@ -150,7 +171,7 @@ export async function createSessionToken(user: SessionUser): Promise<string> {
 
 export async function readSessionToken(
   token: string | null | undefined,
-): Promise<SessionPayload | null> {
+): Promise<SessionUser | null> {
   if (!token) return null;
 
   const dot = token.indexOf(".");
@@ -181,13 +202,23 @@ export async function readSessionToken(
   }
 
   if (!payload || payload.v !== 1) return null;
+  // 注意：这里**不能**要求 `ep` 是数字。老 cookie 没这个字段，加了这道校验
+  // 等于把所有存量登录一次性踢下线。缺了按 0 处理，见 normalizeEpoch。
   if (typeof payload.uid !== "string" || typeof payload.exp !== "number") return null;
   if (payload.exp * 1000 <= Date.now()) return null;
 
-  return payload;
+  return { userId: payload.uid, fullName: payload.name, epoch: normalizeEpoch(payload.ep) };
 }
 
-/** 从当前请求的 cookie 解析会话；没有或无效都返回 null。 */
+/**
+ * 从当前请求的 cookie 解析会话；没有或无效都返回 null。
+ *
+ * ⚠️ 这里**只证明「cookie 是我们签的」**，不证明这个用户现在还有效 ——
+ * 账号可能已被删除、被停用，或密码被重置过。要拿当前状态必须回查库，
+ * 用 `getChatGPTUser()`（见 `app/chatgpt-auth.ts`）。只调本函数做
+ * 「已登录就跳走」的判断，会造出重定向环：cookie 有效 → 跳首页 →
+ * 首页回查库发现账号已停用 → 跳回登录页 → 登录页又只看 cookie → 死循环。
+ */
 export async function readSession(): Promise<SessionUser | null> {
   let token: string | undefined;
   try {
@@ -197,9 +228,7 @@ export async function readSession(): Promise<SessionUser | null> {
     return null;
   }
 
-  const payload = await readSessionToken(token);
-  if (!payload) return null;
-  return { userId: payload.uid, fullName: payload.name };
+  return readSessionToken(token);
 }
 
 /**

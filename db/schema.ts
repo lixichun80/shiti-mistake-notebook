@@ -2,12 +2,25 @@ import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // 登录账号。`id` 同时是 uploads/mistakes 里的 `user_id`，
 // 播种时默认沿用历史值 "shiti"，否则老错题会因为查不到而看起来"消失"。
+//
+// 加列时必须带 .default()：SQLite 的 `ALTER TABLE ADD COLUMN ... NOT NULL`
+// 在表里已有数据、又没给默认值时会直接报错，迁移当场失败。而这里的表全都是
+// 有存量数据的，所以 notNull 的列一律配默认值，一个都不能漏。
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   displayName: text("display_name").notNull(),
   createdAt: text("created_at").notNull(),
+  // 'user' | 'admin'。管理员能进 /admin 管账号。
+  role: text("role").notNull().default("user"),
+  // 'active' | 'disabled'。停用后该账号的会话立刻失效（配合 sessionEpoch）。
+  status: text("status").notNull().default("active"),
+  // 会话版本号。管理员重置密码或停用账号时 +1，把这个用户已签发的 cookie 全部作废。
+  // 会话本身是无状态的，不这么做的话旧 cookie 会一直有效到 30 天后过期。
+  sessionEpoch: integer("session_epoch").notNull().default(0),
+  // 可空：从没登录过就是 NULL，后台列表里显示成「从未登录」。
+  lastLoginAt: text("last_login_at"),
 });
 
 export const uploads = sqliteTable("uploads", {
