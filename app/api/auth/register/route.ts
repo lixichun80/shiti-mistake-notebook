@@ -13,7 +13,9 @@ import {
   checkDisplayName,
   checkPassword,
   checkUsername,
+  checkWechat,
   normalizeUsername,
+  normalizeWechat,
 } from "@/lib/credentials";
 
 function fail(error: string, status: number) {
@@ -31,13 +33,16 @@ export async function POST(request: Request) {
   let username = "";
   let password = "";
   let displayName = "";
+  let wechat = "";
   try {
     const body = (await request.json()) as {
       username?: unknown;
       password?: unknown;
       displayName?: unknown;
+      wechat?: unknown;
     };
     username = normalizeUsername(body.username);
+    wechat = normalizeWechat(body.wechat);
     if (typeof body.password === "string") password = body.password;
     if (typeof body.displayName === "string") displayName = body.displayName.trim();
   } catch {
@@ -45,7 +50,11 @@ export async function POST(request: Request) {
   }
 
   const invalid =
-    checkUsername(username) ?? checkPassword(password) ?? checkDisplayName(displayName);
+    checkUsername(username) ??
+    checkPassword(password) ??
+    checkDisplayName(displayName) ??
+    // 微信号注册时必填：注册即成为客户，管理员要靠它主动加好友联系
+    checkWechat(wechat, true);
   if (invalid) return fail(invalid, 400);
 
   if (!env.DB) return fail("存储服务暂不可用", 503);
@@ -71,7 +80,7 @@ export async function POST(request: Request) {
 
   const passwordHash = await hashPassword(password);
   try {
-    await insertUser({ id, username, passwordHash, displayName: name });
+    await insertUser({ id, username, passwordHash, displayName: name, wechat });
   } catch (error) {
     // 唯一性交给 users_username_unique 索引来判。**不要**写成「先查有没有，再插」——
     // 那中间有竞态，两个请求同时注册同一个名字会双双通过检查。

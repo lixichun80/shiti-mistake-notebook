@@ -36,6 +36,22 @@ export function checkPassword(password: string): string | null {
   return null;
 }
 
+// 微信号只做宽松校验：用户可能填微信号、绑定的手机号或 QQ 号，这些都能搜到人。
+// 太严会把能用的号挡在门外；只拦空白字符和明显超长的输入。
+export const MAX_WECHAT_LENGTH = 40;
+
+export function normalizeWechat(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+/** `required` 为 true 时（注册）不能留空；后台编辑允许清空。 */
+export function checkWechat(wechat: string, required: boolean): string | null {
+  if (!wechat) return required ? "请填写微信号，方便我们联系你" : null;
+  if (/\s/.test(wechat)) return "微信号不能包含空格";
+  if (wechat.length > MAX_WECHAT_LENGTH) return `微信号不能超过 ${MAX_WECHAT_LENGTH} 个字符`;
+  return null;
+}
+
 /** 昵称可以留空（回落到用户名），但不能只由空白组成。 */
 export function checkDisplayName(displayName: string): string | null {
   if (displayName.length > MAX_DISPLAY_NAME_LENGTH) {

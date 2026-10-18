@@ -6,6 +6,7 @@ import { ArrowRight, BookOpen, LoaderCircle } from "lucide-react";
 export default function RegisterForm() {
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [wechat, setWechat] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
@@ -30,7 +31,7 @@ export default function RegisterForm() {
       const response = await fetch("/api/auth/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password, displayName }),
+        body: JSON.stringify({ username, password, displayName, wechat }),
       });
       // nginx 限流返回的是 HTML，解析失败要兜住，否则会把 SyntaxError 抛给用户
       const data = (await response.json().catch(() => ({}))) as { error?: string };
@@ -98,6 +99,21 @@ export default function RegisterForm() {
           </label>
 
           <label>
+            <span>微信号</span>
+            <input
+              name="wechat"
+              value={wechat}
+              onChange={(event) => setWechat(event.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              maxLength={40}
+              required
+            />
+            <small className="login-hint">微信号或绑定微信的手机号，方便我们添加你</small>
+          </label>
+
+          <label>
             <span>密码</span>
             <input
               name="password"
@@ -131,7 +147,7 @@ export default function RegisterForm() {
           <button
             type="submit"
             className="login-submit"
-            disabled={pending || !username || !password || !confirm || mismatched}
+            disabled={pending || !username || !wechat.trim() || !password || !confirm || mismatched}
           >
             {pending ? (
               <>

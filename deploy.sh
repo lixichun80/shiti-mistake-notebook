@@ -112,7 +112,7 @@ node scripts/dump-schema.mjs > "$SCHEMA_JSON" || fail "复查库结构失败"
 SHITI_SCHEMA_JSON="$SCHEMA_JSON" node -e '
 const fs = require("node:fs");
 const schema = JSON.parse(fs.readFileSync(process.env.SHITI_SCHEMA_JSON, "utf8"));
-const missing = ["role", "status", "session_epoch", "last_login_at"]
+const missing = ["role", "status", "session_epoch", "last_login_at", "wechat"]
   .filter((col) => !(schema.users || []).includes(col));
 if (missing.length) {
   console.error("users 表缺少列：" + missing.join("、"));
@@ -282,8 +282,16 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/register")
 [ "$code" = "200" ] || fail "/register 匿名访问返回 $code，应为 200"
 pass "/register 匿名可访问"
 
+# 微信号是注册必填项（管理员靠它主动联系客户）；不带它必须被 400 拦下，且不落库
 SHITI_TEST_USER="$TEST_USER" SHITI_TEST_PASSWORD="$TEST_PASSWORD" \
   node -e 'process.stdout.write(JSON.stringify({username:process.env.SHITI_TEST_USER,password:process.env.SHITI_TEST_PASSWORD,displayName:"部署验证"}))' > "$body"
+code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Content-Type: application/json' \
+  --data-binary "@$body" "http://127.0.0.1:$PORT/api/auth/register")
+[ "$code" = "400" ] || fail "不填微信号注册返回 $code，应为 400"
+pass "不填微信号无法注册"
+
+SHITI_TEST_USER="$TEST_USER" SHITI_TEST_PASSWORD="$TEST_PASSWORD" \
+  node -e 'process.stdout.write(JSON.stringify({username:process.env.SHITI_TEST_USER,password:process.env.SHITI_TEST_PASSWORD,displayName:"部署验证",wechat:"deploycheck_wx"}))' > "$body"
 code=$(curl -s -o /dev/null -w '%{http_code}' -c "$testjar" -H 'Content-Type: application/json' \
   --data-binary "@$body" "http://127.0.0.1:$PORT/api/auth/register")
 [ "$code" = "200" ] || fail "注册接口返回 $code，应为 200"

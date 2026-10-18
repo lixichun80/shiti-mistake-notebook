@@ -296,9 +296,23 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
     username: "httpregistered",
     password,
     displayName: "HTTP Registered",
+    wechat: "http_registered_wx",
   };
+  const { wechat: _omit, ...noWechat } = registration;
+  await request("/api/auth/register", 400, undefined, "POST", { ...noWechat, username: "httpnowechat" });
+  await request("/api/auth/register", 400, undefined, "POST", { ...registration, username: "httpspacewx", wechat: "a b" });
   await request("/api/auth/register", 200, undefined, "POST", registration);
   await request("/api/auth/register", 409, undefined, "POST", registration);
+  const findUser = async (username) =>
+    (await (await request("/api/admin/users", 200, admin)).json()).users.find((u) => u.username === username);
+  const registered = await findUser("httpregistered");
+  assert.equal(registered.wechat, "http_registered_wx");
+  assert.equal(await findUser("httpnowechat"), undefined);
+  await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { wechat: "  edited_wx  " });
+  assert.equal((await findUser("httpregistered")).wechat, "edited_wx");
+  await request(`/api/admin/users/${registered.id}`, 400, admin, "PATCH", { wechat: "x".repeat(41) });
+  await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { wechat: "" });
+  assert.equal((await findUser("httpregistered")).wechat, null);
   const created = await (
     await request("/api/admin/users", 200, admin, "POST", {
       username: "httpcreated",
@@ -306,6 +320,7 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
       displayName: "HTTP Created",
     })
   ).json();
+  assert.equal((await findUser("httpcreated")).wechat, null);
   await request(`/api/admin/users/${created.id}`, 200, admin, "DELETE");
   console.log(
     `Admin HTTP checks passed (${checks} requests/assertions). No real AI calls made.`,

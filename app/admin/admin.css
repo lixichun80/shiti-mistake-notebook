@@ -296,6 +296,19 @@
   overflow: hidden;
   white-space: pre-wrap;
 }
+.ac-wechat {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.ac-wechat span {
+  user-select: all;
+}
+.ac-wechat button {
+  padding: 2px 7px;
+  font-size: 12px;
+}
 .ac-badge {
   display: inline-block;
   padding: 2px 8px;

@@ -92,6 +92,7 @@ export type AdminUserRow = {
   status: UserStatus;
   createdAt: string;
   lastLoginAt: string | null;
+  wechat: string | null;
   mistakeCount: number;
 };
 
@@ -99,12 +100,12 @@ export type AdminUserRow = {
 export async function listUsersWithCounts(): Promise<AdminUserRow[]> {
   const { results } = await db()
     .prepare(
-      "SELECT u.id, u.username, u.display_name, u.role, u.status, u.created_at, u.last_login_at, " +
+      "SELECT u.id, u.username, u.display_name, u.role, u.status, u.created_at, u.last_login_at, u.wechat, " +
         "COUNT(m.id) AS mistake_count " +
         "FROM users u LEFT JOIN mistakes m ON m.user_id = u.id " +
         "GROUP BY u.id ORDER BY u.created_at",
     )
-    .all<Omit<UserRow, "password_hash" | "session_epoch"> & { mistake_count: number }>();
+    .all<Omit<UserRow, "password_hash" | "session_epoch"> & { wechat: string | null; mistake_count: number }>();
 
   return results.map((row) => ({
     id: row.id,
@@ -114,6 +115,7 @@ export async function listUsersWithCounts(): Promise<AdminUserRow[]> {
     status: row.status === "active" ? "active" : "disabled",
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at ?? null,
+    wechat: row.wechat || null,
     mistakeCount: Number(row.mistake_count ?? 0),
   }));
 }
@@ -135,13 +137,14 @@ export type NewUser = {
   passwordHash: string;
   displayName: string;
   role?: UserRole;
+  wechat?: string | null;
 };
 
 export async function insertUser(user: NewUser): Promise<void> {
   await db()
     .prepare(
-      "INSERT INTO users (id, username, password_hash, display_name, role, status, session_epoch, created_at) " +
-        "VALUES (?, ?, ?, ?, ?, 'active', 0, ?)",
+      "INSERT INTO users (id, username, password_hash, display_name, role, status, session_epoch, created_at, wechat) " +
+        "VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?)",
     )
     .bind(
       user.id,
@@ -150,6 +153,7 @@ export async function insertUser(user: NewUser): Promise<void> {
       user.displayName,
       user.role ?? "user",
       new Date().toISOString(),
+      user.wechat || null,
     )
     .run();
 }
@@ -161,6 +165,11 @@ export function isUniqueViolation(error: unknown): boolean {
 
 export async function setDisplayName(id: string, displayName: string): Promise<void> {
   await db().prepare("UPDATE users SET display_name = ? WHERE id = ?").bind(displayName, id).run();
+}
+
+/** 空字符串存成 NULL，后台列表统一显示「未填写」。 */
+export async function setWechat(id: string, wechat: string): Promise<void> {
+  await db().prepare("UPDATE users SET wechat = ? WHERE id = ?").bind(wechat || null, id).run();
 }
 
 export async function setRole(id: string, role: UserRole): Promise<void> {

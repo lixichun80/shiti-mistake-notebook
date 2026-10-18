@@ -6,7 +6,9 @@ import {
   checkDisplayName,
   checkPassword,
   checkUsername,
+  checkWechat,
   normalizeUsername,
+  normalizeWechat,
 } from "@/lib/credentials";
 
 function fail(error: string, status: number) {
@@ -36,14 +38,17 @@ export async function POST(request: Request) {
   let password = "";
   let displayName = "";
   let role = "user";
+  let wechat = "";
   try {
     const body = (await request.json()) as {
       username?: unknown;
       password?: unknown;
       displayName?: unknown;
       role?: unknown;
+      wechat?: unknown;
     };
     username = normalizeUsername(body.username);
+    wechat = normalizeWechat(body.wechat);
     if (typeof body.password === "string") password = body.password;
     if (typeof body.displayName === "string") displayName = body.displayName.trim();
     if (body.role === "admin") role = "admin";
@@ -52,7 +57,11 @@ export async function POST(request: Request) {
   }
 
   const invalid =
-    checkUsername(username) ?? checkPassword(password) ?? checkDisplayName(displayName);
+    checkUsername(username) ??
+    checkPassword(password) ??
+    checkDisplayName(displayName) ??
+    // 管理员建号时微信号选填：线下认识的人可能已经是好友了
+    checkWechat(wechat, false);
   if (invalid) return fail(invalid, 400);
 
   if (!env.DB) return fail("存储服务暂不可用", 503);
@@ -65,6 +74,7 @@ export async function POST(request: Request) {
       passwordHash: await hashPassword(password),
       displayName: displayName || username,
       role: role === "admin" ? "admin" : "user",
+      wechat,
     });
   } catch (error) {
     if (isUniqueViolation(error)) return fail("这个用户名已经被占用了", 409);

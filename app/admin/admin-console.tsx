@@ -28,7 +28,9 @@ import {
   checkPassword,
   checkUsername,
   checkDisplayName,
+  checkWechat,
   normalizeUsername,
+  normalizeWechat,
 } from "@/lib/credentials";
 import "./admin.css";
 
@@ -41,6 +43,7 @@ type User = {
   mistakeCount: number;
   createdAt: string;
   lastLoginAt: string | null;
+  wechat: string | null;
 };
 type Page = {
   total: number;
@@ -382,7 +385,7 @@ function UserManager({ self }: { self: string }) {
   const [notice, setNotice] = useState("");
   const list = (data?.users || []).filter(
     (u) =>
-      `${u.username} ${u.displayName}`
+      `${u.username} ${u.displayName} ${u.wechat || ""}`
         .toLowerCase()
         .includes(search.toLowerCase()) &&
       (!role || u.role === role) &&
@@ -390,6 +393,15 @@ function UserManager({ self }: { self: string }) {
   );
   const totalPages = Math.max(1, Math.ceil(list.length / 20));
   const shownPage = Math.min(page, totalPages);
+  // 剪贴板 API 只在 HTTPS 下可用；IP 直连的 http 入口会失败，此时提示手动复制
+  async function copyWechat(wechat: string) {
+    try {
+      await navigator.clipboard.writeText(wechat);
+      setNotice(`已复制微信号 ${wechat}，可到微信里搜索添加`);
+    } catch {
+      setNotice(`复制失败，请手动选中微信号：${wechat}`);
+    }
+  }
   return (
     <>
       <p className="ac-intro">
@@ -403,7 +415,7 @@ function UserManager({ self }: { self: string }) {
       <div className="ac-toolbar">
         <input
           aria-label="搜索用户"
-          placeholder="搜索昵称或用户名"
+          placeholder="搜索昵称、用户名或微信号"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value);
@@ -450,6 +462,7 @@ function UserManager({ self }: { self: string }) {
               <thead>
                 <tr>
                   <th>用户</th>
+                  <th>微信号</th>
                   <th>角色 / 状态</th>
                   <th>错题</th>
                   <th>最近登录</th>
@@ -465,6 +478,21 @@ function UserManager({ self }: { self: string }) {
                         {u.id === self && "（我）"}
                       </strong>
                       <small>@{u.username}</small>
+                    </td>
+                    <td>
+                      {u.wechat ? (
+                        <div className="ac-wechat">
+                          <span>{u.wechat}</span>
+                          <button
+                            type="button"
+                            onClick={() => copyWechat(u.wechat!)}
+                          >
+                            复制
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="ac-muted">未填写</span>
+                      )}
                     </td>
                     <td>
                       <Badge>
@@ -552,6 +580,7 @@ function UserEditor({
   const user = "user" in modal ? modal.user : undefined;
   const [username, setUsername] = useState("");
   const [name, setName] = useState(user?.displayName || "");
+  const [wechat, setWechat] = useState(user?.wechat || "");
   const [role, setRole] = useState(user?.role || "user");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -571,7 +600,9 @@ function UserEditor({
     if (modal.mode === "create")
       invalid = checkUsername(normalizeUsername(username));
     if (modal.mode === "create" || modal.mode === "edit")
-      invalid ||= checkDisplayName(name.trim());
+      invalid ||=
+        checkDisplayName(name.trim()) ||
+        checkWechat(normalizeWechat(wechat), false);
     if (modal.mode === "create" || modal.mode === "password")
       invalid ||=
         checkPassword(password) ||
@@ -585,9 +616,9 @@ function UserEditor({
     try {
       const body =
         modal.mode === "create"
-          ? { username, displayName: name, role, password }
+          ? { username, displayName: name, role, password, wechat }
           : modal.mode === "edit"
-            ? { displayName: name, role }
+            ? { displayName: name, role, wechat }
             : modal.mode === "password"
               ? { password }
               : { status: user?.status === "active" ? "disabled" : "active" };
@@ -645,6 +676,15 @@ function UserEditor({
                   placeholder="留空则使用用户名"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
+                />
+              </Field>
+              <Field label="微信号">
+                <input
+                  maxLength={40}
+                  autoComplete="off"
+                  placeholder="选填，留空表示未填写"
+                  value={wechat}
+                  onChange={(e) => setWechat(e.target.value)}
                 />
               </Field>
               <Field label="角色">

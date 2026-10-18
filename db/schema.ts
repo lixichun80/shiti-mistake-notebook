@@ -21,6 +21,8 @@ export const users = sqliteTable("users", {
   sessionEpoch: integer("session_epoch").notNull().default(0),
   // 可空：从没登录过就是 NULL，后台列表里显示成「从未登录」。
   lastLoginAt: text("last_login_at"),
+  // 微信号，注册时必填，方便管理员主动添加。可空：老账号和管理员建的号可能没有。
+  wechat: text("wechat"),
 });
 
 export const uploads = sqliteTable("uploads", {
