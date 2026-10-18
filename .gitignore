@@ -34,6 +34,9 @@ yarn-error.log*
 # Wrangler local-dev secrets (real DeepSeek key); kept out of Git on purpose.
 .dev.vars
 .dev.vars.*
+# 播种账号（明文登录密码），只被 deploy.sh 读。故意不叫 .dev.vars.<name>，
+# 免得被 wrangler 当成「<name> 环境的变量文件」加载进 worker。
+.deploy.vars
 
 # vercel
 .vercel

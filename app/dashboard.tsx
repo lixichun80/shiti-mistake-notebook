@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
-import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, Menu, Plus, Printer, Search, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, Printer, Search, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
 
 type Similar = { question: string; answer: string; explanation: string };
 type Mistake = {
@@ -16,6 +16,19 @@ type Tab = "home" | "notebook" | "results";
 
 const subjectColors: Record<string, string> = { 数学: "lavender", 语文: "coral", 英语: "mint", 物理: "blue", 化学: "amber", 生物: "green", 历史: "sand", 地理: "teal", 政治: "rose" };
 const formatDate = (date: string) => new Date(date).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+
+/**
+ * 会话过期时接口返回 401，把用户送回登录页，而不是让他停在空页面上发呆。
+ *
+ * 这里必须整页跳转而不是 router.push：会话变了，客户端攒下的错题、筛选条件
+ * 全都得丢掉重新从服务端取。
+ */
+function redirectIfUnauthorized(response: Response): boolean {
+  if (response.status !== 401) return false;
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+  window.location.href = "/login";
+  return true;
+}
 
 async function shrinkImage(file: File): Promise<File> {
   if (file.size < 2.5 * 1024 * 1024) return file;
@@ -68,13 +81,14 @@ function MistakeCard({ item, onSimilar, onPrint, onDelete, busy, showDelete = fa
   </article>;
 }
 
-export default function Dashboard({ name, signedIn, signInPath }: { name: string; signedIn: boolean; signInPath: string }) {
+export default function Dashboard({ name }: { name: string }) {
   const [tab, setTab] = useState<Tab>("home");
   const [mistakes, setMistakes] = useState<Mistake[]>([]);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [selected, setSelected] = useState<SelectedFile[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [loadingList, setLoadingList] = useState(false);
+  // 初值就是 true：挂载后必定拉一次错题本，等请求落地再置回 false
+  const [loadingList, setLoadingList] = useState(true);
   const [aiReady, setAiReady] = useState<boolean | null>(null);
   const [busySimilar, setBusySimilar] = useState<string | null>(null);
   const [printItem, setPrintItem] = useState<Mistake | null>(null);
@@ -88,11 +102,8 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
 
   useEffect(() => {
     fetch("/api/status").then(r => r.json() as Promise<{ aiConfigured: boolean }>).then(data => setAiReady(Boolean(data.aiConfigured))).catch(() => setAiReady(false));
-    if (signedIn) {
-      setLoadingList(true);
-      fetch("/api/mistakes").then(r => r.json() as Promise<{ mistakes?: Mistake[] }>).then(data => { if (Array.isArray(data.mistakes)) setMistakes(data.mistakes); }).catch(() => setError("错题本加载失败，请刷新页面重试")).finally(() => setLoadingList(false));
-    }
-  }, [signedIn]);
+    fetch("/api/mistakes").then(r => redirectIfUnauthorized(r) ? null : r.json() as Promise<{ mistakes?: Mistake[] }>).then(data => { if (data && Array.isArray(data.mistakes)) setMistakes(data.mistakes); }).catch(() => setError("错题本加载失败，请刷新页面重试")).finally(() => setLoadingList(false));
+  }, []);
 
   useEffect(() => () => { selected.forEach(item => URL.revokeObjectURL(item.preview)); }, [selected]);
 
@@ -123,7 +134,6 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
   }
 
   async function analyze() {
-    if (!signedIn) { window.location.href = signInPath; return; }
     if (!selected.length) { fileRef.current?.click(); return; }
     if (aiReady === false) { setError("AI 服务尚未配置，当前不能自动分析。请完成服务端密钥配置。"); return; }
     setUploading(true); setError("");
@@ -131,6 +141,7 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
       const form = new FormData();
       for (const item of selected) form.append("files", await shrinkImage(item.file));
       const response = await fetch("/api/analyze", { method: "POST", body: form });
+      if (redirectIfUnauthorized(response)) return;
       const data = await response.json() as Analysis & { error?: string };
       if (!response.ok) throw new Error(data.error || "分析失败，请重试");
       setAnalysis(data); setMistakes(current => [...data.mistakes, ...current]); setSelected([]); setTab("results");
@@ -143,6 +154,7 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
     setBusySimilar(id); setError("");
     try {
       const response = await fetch(`/api/mistakes/${id}/similar`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count }) });
+      if (redirectIfUnauthorized(response)) return;
       const data = await response.json() as { questions: Similar[]; error?: string };
       if (!response.ok) throw new Error(data.error || "生成失败");
       setMistakes(current => current.map(item => item.id === id ? { ...item, similarQuestions: data.questions } : item));
@@ -155,6 +167,7 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
     if (!window.confirm("确定移除这道错题吗？")) return;
     try {
       const response = await fetch(`/api/mistakes/${id}`, { method: "DELETE" });
+      if (redirectIfUnauthorized(response)) return;
       if (!response.ok) throw new Error("移除失败，请重试");
       setMistakes(current => current.filter(item => item.id !== id));
     } catch (cause) { setError(cause instanceof Error ? cause.message : "移除失败"); }
@@ -163,6 +176,17 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
   function printMistake(item: Mistake) {
     flushSync(() => setPrintItem(item));
     window.print();
+  }
+
+  async function signOut() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // 请求失败也照常跳转：本地会话是无状态的，cookie 会随 30 天有效期自然过期
+    }
+    // 整页跳转，把内存里的错题和筛选条件一起清掉
+    // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+    window.location.href = "/login";
   }
 
   const recent = mistakes.slice(0, 2);
@@ -175,11 +199,11 @@ export default function Dashboard({ name, signedIn, signInPath }: { name: string
       <div className="subject-nav">{(subjects.length ? subjects : ["数学", "语文", "英语"]).slice(0, 6).map((item, index) => <button key={item} onClick={() => { setSubject(item); setTab("notebook"); setMobileMenu(false); }}><span className={`subject-dot ${subjectColors[item] || "sand"}`} />{item}<span className="subject-count">{subjects.length ? mistakes.filter(m => m.subject === item).length : index === 0 ? "" : ""}</span></button>)}</div>
       <div className="sidebar-spacer" />
       <div className="sidebar-tip"><div className="tip-icon"><Lightbulb size={19} /></div><strong>每道错题都值得被看见</strong><p>拍照上传，整理思路，练习同类题。</p></div>
-      <div className="sidebar-profile"><span className="avatar">{name.slice(0, 1)}</span><div><strong>{signedIn ? name : "访客"}</strong><small>{signedIn ? "我的学习空间" : "登录后保存错题"}</small></div><span className="profile-status" /></div>
+      <div className="sidebar-profile"><span className="avatar">{name.slice(0, 1)}</span><div><strong>{name}</strong><small>我的学习空间</small></div><button className="logout-button" onClick={signOut} title="退出登录" aria-label="退出登录"><LogOut size={15} /></button></div>
     </aside>
 
     <main className="main-area">
-      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="打开菜单"><Menu size={22} /></button><div className="breadcrumb">学习空间 <span>/</span> <strong>{tab === "home" ? "学习工作台" : tab === "results" ? "分析结果" : "我的错题本"}</strong></div><div className="top-right"><span className="today"><CalendarDays size={16} />{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}</span>{signedIn ? <span className="small-avatar">{name.slice(0, 1)}</span> : <a className="login-link" href={signInPath} target="_top">登录</a>}</div></header>
+      <header className="topbar"><button className="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="打开菜单"><Menu size={22} /></button><div className="breadcrumb">学习空间 <span>/</span> <strong>{tab === "home" ? "学习工作台" : tab === "results" ? "分析结果" : "我的错题本"}</strong></div><div className="top-right"><span className="today"><CalendarDays size={16} />{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}</span><span className="small-avatar">{name.slice(0, 1)}</span></div></header>
       <div className="content-wrap">
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="关闭提示"><X size={17} /></button></div>}
         {tab === "home" && <>
