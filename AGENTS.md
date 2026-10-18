@@ -98,13 +98,28 @@ nginx 侧集中在 snippet `/etc/nginx/snippets/shiti-app.conf`（两个 server 
 它），登录接口限速在 `/etc/nginx/conf.d/shiti-limit.conf`——**改代理配置只改这两处**。
 `study.zxai.studio` 的证书由 `certbot --nginx` 管理并自动续期，不要手改那个文件的 443 段。
 
-```bash
-ssh server-198 "/opt/shiti-mistake-notebook/deploy.sh"
-```
-
 `deploy.sh` 会拉取、装依赖、构建、迁移、播种账号、重启、验证；任一步失败即中止。
 
-构建耗时 5–8 分钟（683 个包 + vinext 构建），**必须后台跑**，直接 ssh 执行会撞工具超时。
+构建耗时 5–8 分钟（683 个包 + vinext 构建）。**不要用 `ssh server-198 "bash deploy.sh"`
+前台跑**——SSH 长连接会被服务器掐断（在 `npm ci` 阶段实测断开过，`exit 255`，
+脚本被杀在装依赖中间，`node_modules` 残缺），而且本地工具也有超时。
+
+正确姿势是让部署**脱离 SSH 会话**，日志落盘，另开连接轮询：
+
+```bash
+ssh server-198 "cd /opt/shiti-mistake-notebook && setsid nohup bash deploy.sh \
+  > /tmp/shiti-deploy.log 2>&1 < /dev/null & echo 已启动"
+
+# 之后每隔几分钟看一眼
+ssh server-198 "pgrep -f 'bash deploy.sh' >/dev/null && echo 仍在跑 || echo 已结束; \
+  tail -20 /tmp/shiti-deploy.log"
+```
+
+**日志尾部出现 `==> 部署完成` 才算成功**（前面 8 条 `✓` 是验证断言）。
+
+`deploy.sh` 只重启应用、不碰 nginx。改了 `/etc/nginx/` 下的东西要**另行手动**
+`nginx -t && systemctl reload nginx`：先部署验证应用没问题，再 reload 切换流量，
+中间不会出现「两边都没防护」的窗口。
 
 迁移用 sed 改写成 `CREATE TABLE IF NOT EXISTS` / `CREATE [UNIQUE] INDEX IF NOT EXISTS`，
 所以可重复执行；**迁移文件里出现 `ALTER TABLE` 会直接中止**（SQLite 没有
