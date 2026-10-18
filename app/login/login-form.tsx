@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import Link from "next/link";
 import { ArrowRight, BookOpen, LoaderCircle } from "lucide-react";
 
 export default function LoginForm({ returnTo }: { returnTo: string }) {
@@ -111,7 +110,9 @@ export default function LoginForm({ returnTo }: { returnTo: string }) {
         </form>
 
         <p className="login-switch">
-          还没有账号？<Link href="/register" className="login-link">立即注册</Link>
+          还没有账号？
+          {/* vinext 客户端 Link 跳转会报错，认证入口使用整页导航。 */}
+          <a href="/register" className="login-link">立即注册</a>
         </p>
 
         <p className="login-footnote">
