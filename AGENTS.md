@@ -51,7 +51,12 @@ npx wrangler dev --config dist/server/wrangler.json --local \
 ## 部署
 
 服务器 `198.44.177.126`，路径 `/opt/shiti-mistake-notebook`，pm2 进程名 `shiti-notebook`，
-nginx 监听 `8095` 反代到 `127.0.0.1:3105`。
+nginx 反代到 `127.0.0.1:3105`。两个入口：**https://study.zxai.studio/**（主入口，Let's Encrypt
+证书）和 http://198.44.177.126:8095/（IP 直连备用）。
+
+nginx 侧访问控制与请求头注入集中在 snippet `/etc/nginx/snippets/shiti-app.conf`，
+两个 server block 都 `include` 它——**改密码/改显示名字只改这一处**，别改到某个 server block 里。
+`study.zxai.studio` 的证书由 `certbot --nginx` 管理并自动续期，不要手改那个文件的 443 段。
 
 ```bash
 ssh server-198 "/opt/shiti-mistake-notebook/deploy.sh"
@@ -69,6 +74,9 @@ ssh server-198 "/opt/shiti-mistake-notebook/deploy.sh"
 1. `/api/status` 返回 `{"aiConfigured":true}`
 2. 不带身份头请求 `/api/mistakes` 返回 **401**
 3. 带身份头请求 `/api/mistakes` 返回 **200**
+
+域名相关的验证（DNS 解析、证书、公网可达）一律在服务器上做——本地 Clash 会把域名解析成
+`198.18.0.25` 的 fake-IP，本地结果没有参考价值。
 
 ## 约定
 
