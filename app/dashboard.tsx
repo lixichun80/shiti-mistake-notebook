@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
-import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, Printer, Search, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
+import { makeMistakeDocx, mistakeDocxFilename } from "@/lib/mistake-docx";
+import { ArrowRight, BookOpen, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Clock3, CloudUpload, FileImage, Filter, Lightbulb, LoaderCircle, LogOut, Menu, Plus, FileDown, Search, Sparkles, Trash2, UploadCloud, X } from "lucide-react";
 
 type Similar = { question: string; answer: string; explanation: string };
 type Mistake = {
@@ -61,12 +61,8 @@ function SimilarExercise({ item, index }: { item: Similar; index: number }) {
   return <div className="similar-item"><span className="similar-index">{String(index + 1).padStart(2, "0")}</span><div><strong>{item.question}</strong><div className="reveal-actions"><button type="button" onClick={() => { setShowReasoning(!showReasoning); if (showReasoning) setShowAnswer(false); }} aria-expanded={showReasoning}>{showReasoning ? "收起思路" : "查看思路"}</button><button type="button" onClick={() => setShowAnswer(!showAnswer)} disabled={!showReasoning} aria-expanded={showAnswer} title={!showReasoning ? "请先查看思路" : undefined}>{showAnswer ? "收起答案" : "查看答案"}</button></div>{showReasoning && <p className="reveal-content"><b>思路：</b>{item.explanation}</p>}{showAnswer && <p className="reveal-content answer"><b>答案：</b>{item.answer}</p>}</div></div>;
 }
 
-function PrintSheet({ item }: { item: Mistake }) {
-  return <section className="print-sheet"><header><h1>错题练习单</h1><p>{item.subject} · {formatDate(item.createdAt)}</p></header><section className="print-original"><h2>原题</h2><p className="print-question">{item.question}</p><div className="print-answers"><div><strong>我的答案</strong><p>{item.incorrectAnswer || "图片中未能读清"}</p></div><div><strong>正确答案</strong><p>{item.correctAnswer}</p></div></div></section>{item.similarQuestions.length > 0 && <section className="print-practice"><h2>举一反三</h2><ol>{item.similarQuestions.map((similar, index) => <li key={index}><p>{similar.question}</p><div className="print-writing-space" /></li>)}</ol></section>}</section>;
-}
-
-function MistakeCard({ item, onSimilar, onPrint, onDelete, busy, showDelete = false }: {
-  item: Mistake; onSimilar: (id: string, count: number) => void; onPrint: (item: Mistake) => void; onDelete: (id: string) => void; busy: boolean; showDelete?: boolean;
+function MistakeCard({ item, onSimilar, onExport, onDelete, busy, showDelete = false }: {
+  item: Mistake; onSimilar: (id: string, count: number) => void; onExport: (item: Mistake) => void; onDelete: (id: string) => void; busy: boolean; showDelete?: boolean;
 }) {
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
   const [similarCount, setSimilarCount] = useState("3");
@@ -76,7 +72,7 @@ function MistakeCard({ item, onSimilar, onPrint, onDelete, busy, showDelete = fa
     <h3>{item.question}</h3>
     <div className="answer-grid"><div className="answer-box wrong"><span className="answer-label">我的答案</span><p>{item.incorrectAnswer || "图片中未能读清"}</p></div><div className="answer-box correct"><span className="answer-label">正确答案</span><p>{item.correctAnswer}</p></div></div>
     <div className="reasoning"><div className="reasoning-heading"><Lightbulb size={18} /><strong>解题思路</strong></div><p>{item.reasoning}</p></div>
-    <div className="question-footer"><span className="source-line"><FileImage size={14} />{item.sourceName} · 第 {item.pageNumber} 页</span><div className="question-actions"><button className="print-button" onClick={() => onPrint(item)}><Printer size={15} />打印错题</button>{showDelete && <button className="icon-action" title="移除这道错题" onClick={() => onDelete(item.id)}><Trash2 size={16} /></button>}<div className="similar-request"><label htmlFor={`similar-count-${item.id}`}>再给我出 <input id={`similar-count-${item.id}`} className="similar-count" type="number" min="1" max="5" step="1" inputMode="numeric" value={similarCount} onChange={event => { if (/^[1-5]?$/.test(event.target.value)) setSimilarCount(event.target.value); }} aria-label="类似题数量，1 到 5 道" /> 道类似题目</label><button className="similar-button" onClick={() => onSimilar(item.id, Number(similarCount))} disabled={busy || !/^[1-5]$/.test(similarCount)}>{busy ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}生成</button></div>{item.similarQuestions.length > 0 && <button className="similar-toggle" onClick={() => setUserExpanded(!answersOpen)} aria-expanded={answersOpen}>{answersOpen ? "收起" : "查看"}已生成的 {item.similarQuestions.length} 道题<ChevronDown size={15} className={answersOpen ? "turn" : ""} /></button>}</div></div>
+    <div className="question-footer"><span className="source-line"><FileImage size={14} />{item.sourceName} · 第 {item.pageNumber} 页</span><div className="question-actions"><button className="export-button" onClick={() => onExport(item)}><FileDown size={15} />生成 Word</button>{showDelete && <button className="icon-action" title="移除这道错题" onClick={() => onDelete(item.id)}><Trash2 size={16} /></button>}<div className="similar-request"><label htmlFor={`similar-count-${item.id}`}>再给我出 <input id={`similar-count-${item.id}`} className="similar-count" type="number" min="1" max="5" step="1" inputMode="numeric" value={similarCount} onChange={event => { if (/^[1-5]?$/.test(event.target.value)) setSimilarCount(event.target.value); }} aria-label="类似题数量，1 到 5 道" /> 道类似题目</label><button className="similar-button" onClick={() => onSimilar(item.id, Number(similarCount))} disabled={busy || !/^[1-5]$/.test(similarCount)}>{busy ? <LoaderCircle size={16} className="spin" /> : <Sparkles size={16} />}生成</button></div>{item.similarQuestions.length > 0 && <button className="similar-toggle" onClick={() => setUserExpanded(!answersOpen)} aria-expanded={answersOpen}>{answersOpen ? "收起" : "查看"}已生成的 {item.similarQuestions.length} 道题<ChevronDown size={15} className={answersOpen ? "turn" : ""} /></button>}</div></div>
     {item.similarQuestions.length > 0 && answersOpen && <div className="similar-list"><div className="similar-title"><Sparkles size={17} />举一反三 · {item.similarQuestions.length} 道练习</div>{item.similarQuestions.map((similar, index) => <SimilarExercise item={similar} index={index} key={index} />)}</div>}
   </article>;
 }
@@ -91,7 +87,7 @@ export default function Dashboard({ name }: { name: string }) {
   const [loadingList, setLoadingList] = useState(true);
   const [aiReady, setAiReady] = useState<boolean | null>(null);
   const [busySimilar, setBusySimilar] = useState<string | null>(null);
-  const [printItem, setPrintItem] = useState<Mistake | null>(null);
+  const [exportFile, setExportFile] = useState<{ url: string; name: string } | null>(null);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
   const [subject, setSubject] = useState("全部科目");
@@ -106,12 +102,7 @@ export default function Dashboard({ name }: { name: string }) {
   }, []);
 
   useEffect(() => () => { selected.forEach(item => URL.revokeObjectURL(item.preview)); }, [selected]);
-
-  useEffect(() => {
-    const clearPrintSheet = () => setPrintItem(null);
-    window.addEventListener("afterprint", clearPrintSheet);
-    return () => window.removeEventListener("afterprint", clearPrintSheet);
-  }, []);
+  useEffect(() => () => { if (exportFile) URL.revokeObjectURL(exportFile.url); }, [exportFile]);
 
   const subjects = useMemo(() => [...new Set(mistakes.map(item => item.subject))], [mistakes]);
   const filtered = useMemo(() => mistakes.filter(item => (subject === "全部科目" || item.subject === subject) && (!month || item.createdAt.slice(0, 7) === month) && (!query || `${item.question} ${item.knowledgePoint} ${item.sourceName}`.toLowerCase().includes(query.toLowerCase()))), [mistakes, subject, month, query]);
@@ -173,9 +164,21 @@ export default function Dashboard({ name }: { name: string }) {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "移除失败"); }
   }
 
-  function printMistake(item: Mistake) {
-    flushSync(() => setPrintItem(item));
-    window.print();
+  function exportMistake(item: Mistake) {
+    setError("");
+    try {
+      const bytes = makeMistakeDocx(item);
+      const blob = new Blob([bytes.buffer], { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const name = mistakeDocxFilename(item);
+      link.href = url; link.download = name;
+      setExportFile({ url, name });
+      document.body.appendChild(link);
+      try { link.click(); } finally { link.remove(); }
+    } catch {
+      setError("Word 文档生成失败，请重试。");
+    }
   }
 
   async function signOut() {
@@ -206,6 +209,7 @@ export default function Dashboard({ name }: { name: string }) {
       <header className="topbar"><button className="mobile-menu" onClick={() => setMobileMenu(!mobileMenu)} aria-label="打开菜单"><Menu size={22} /></button><div className="breadcrumb">学习空间 <span>/</span> <strong>{tab === "home" ? "学习工作台" : tab === "results" ? "分析结果" : "我的错题本"}</strong></div><div className="top-right"><span className="today"><CalendarDays size={16} />{new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}</span><span className="small-avatar">{name.slice(0, 1)}</span></div></header>
       <div className="content-wrap">
         {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError("")} aria-label="关闭提示"><X size={17} /></button></div>}
+        {exportFile && <div className="notice-card" role="status"><span>Word 文档已生成，可在下载列表打开后编辑、打印。</span><a className="word-download-link" href={exportFile.url} download={exportFile.name}>下载 Word</a><button className="icon-action" onClick={() => setExportFile(null)} aria-label="关闭下载提示"><X size={17} /></button></div>}
         {tab === "home" && <>
           <section className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-line" /> YOUR LEARNING DESK</div><h1>你好，{name}<span className="wave">✳</span></h1><p>把今天不懂的题，变成明天会做的题。</p></div><span className="welcome-date"><Clock3 size={16} />今天也在认真进步</span></section>
           <section className="hero-card"><div className="hero-content"><span className="hero-kicker"><Sparkles size={14} /> SMART STUDY COMPANION</span><h2>错题有解，<br /><em>成长有迹。</em></h2><p>上传试卷或作业照片，自动识别错题，逐题梳理解题思路，收藏到你的专属错题本。</p><button className="hero-cta" onClick={() => fileRef.current?.click()}>开始整理错题 <ArrowRight size={17} /></button></div><div className="hero-art" aria-hidden="true"><span className="art-orbit orbit-one" /><span className="art-orbit orbit-two" /><div className="art-paper back"><span /><span /><span /></div><div className="art-paper front"><div className="paper-badge"><Check size={17} /></div><span className="paper-line wide" /><span className="paper-line medium" /><span className="paper-line short" /><div className="paper-formula">2x + 6 = 14</div><div className="paper-solution">x = 4 <span>✓</span></div></div><div className="art-spark top">✦</div><div className="art-spark bottom">✳</div></div></section>
@@ -214,11 +218,11 @@ export default function Dashboard({ name }: { name: string }) {
           <section className="panel process-panel"><div className="panel-heading"><div><span className="section-kicker">HOW IT WORKS</span><h2>从拍照到掌握</h2><p>只需简单三步，理清每一次失误。</p></div></div><div className="steps"><div className="step"><span className="step-number">01</span><div><strong>上传图片</strong><p>拍摄试卷或作业，清晰显示题目与批改标记。</p></div><span className="step-icon lavender"><Camera size={20} /></span></div><div className="step"><span className="step-number">02</span><div><strong>逐题分析</strong><p>识别科目与明确错题，展示答案和解题思路。</p></div><span className="step-icon coral"><Lightbulb size={20} /></span></div><div className="step"><span className="step-number">03</span><div><strong>归档巩固</strong><p>按科目、时间保存，按需练习 1–5 道类似题。</p></div><span className="step-icon mint"><BookOpen size={20} /></span></div></div><div className="process-footer"><CheckCircle2 size={17} />错题仅对登录的你可见</div></section></div>
           <section className="recent-section"><div className="section-heading"><div><span className="section-kicker">YOUR PROGRESS</span><h2>最近整理</h2></div><button onClick={() => setTab("notebook")}>查看全部 <ArrowRight size={16} /></button></div>{loadingList ? <div className="empty-recent"><LoaderCircle className="spin" size={20} />正在加载错题本...</div> : recent.length ? <div className="recent-list">{recent.map(item => <button key={item.id} className="recent-item" onClick={() => { setSubject(item.subject); setQuery(item.question.slice(0, 12)); setTab("notebook"); }}><SubjectPill subject={item.subject} /><span>{item.question}</span><small>{formatDate(item.createdAt)}</small><ArrowRight size={16} /></button>)}</div> : <div className="empty-recent"><div className="empty-icon"><BookOpen size={24} /></div><div><strong>你的错题本还很清爽</strong><p>上传第一张试卷，开始积累属于自己的学习地图。</p></div></div>}</section>
         </>}
-        {tab === "results" && analysis && <><section className="page-intro"><span className="section-kicker">ANALYSIS COMPLETE</span><h1>分析完成 <span className="success-check"><Check size={22} /></span></h1><p>{analysis.summary || "已完成图片分析。"}</p></section><div className="result-summary"><div><span>识别科目</span><SubjectPill subject={analysis.subject} /></div><div><span>发现错题</span><strong>{analysis.mistakes.length} 道</strong></div><div><span>归档状态</span><strong className="saved"><CheckCircle2 size={17} />已存入错题本</strong></div></div>{analysis.uncertainNote && <div className="notice-card"><Lightbulb size={17} /><span>{analysis.uncertainNote}</span></div>}{analysis.mistakes.length ? <div className="question-stack">{analysis.mistakes.map(item => <MistakeCard key={item.id} item={mistakes.find(saved => saved.id === item.id) || item} onSimilar={requestSimilar} onPrint={printMistake} onDelete={removeMistake} busy={busySimilar === item.id} />)}</div> : <div className="empty-state"><CheckCircle2 size={42} /><h2>没有识别到明确错题</h2><p>如果图片中的批改标记不清楚，可以换一张更清晰的照片再试。</p></div>}<button className="bottom-primary" onClick={() => { setTab("home"); fileRef.current?.click(); }}><Plus size={18} />继续上传</button></>}
-        {tab === "notebook" && <><section className="page-intro notebook-intro"><span className="section-kicker">MY MISTAKE BOOK</span><h1>我的错题本</h1><p>每道认真整理过的题，都在这里等你重新掌握。</p></section><div className="notebook-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索题目或知识点" aria-label="搜索题目或知识点" /></div><div className="filters"><label><Filter size={16} /><select value={subject} onChange={event => setSubject(event.target.value)} aria-label="筛选科目"><option>全部科目</option>{subjects.map(item => <option key={item}>{item}</option>)}</select></label><label><CalendarDays size={16} /><input type="month" value={month} onChange={event => setMonth(event.target.value)} aria-label="筛选月份" /></label></div></div><div className="notebook-count">共 <strong>{filtered.length}</strong> 道错题 {subject !== "全部科目" && <button onClick={() => { setSubject("全部科目"); setQuery(""); setMonth(""); }}>清除筛选 <X size={13} /></button>}</div>{groups.length ? groups.map(([date, items]) => <section className="date-group" key={date}><div className="date-heading"><span className="date-dot" /><h2>{formatDate(date)}</h2><span>{items.length} 道错题</span></div><div className="question-stack">{items.map(item => <MistakeCard key={item.id} item={item} onSimilar={requestSimilar} onPrint={printMistake} onDelete={removeMistake} busy={busySimilar === item.id} showDelete />)}</div></section>) : <div className="empty-state"><BookOpen size={42} /><h2>{mistakes.length ? "没有找到符合条件的题目" : "错题本还是空的"}</h2><p>{mistakes.length ? "试试更换科目、时间或搜索词。" : "上传试卷或作业，错题会自动按科目和时间存入这里。"}</p><button onClick={() => { setTab("home"); setSubject("全部科目"); setQuery(""); setMonth(""); }}>去上传题目 <ArrowRight size={16} /></button></div>}</>}
+        {tab === "results" && analysis && <><section className="page-intro"><span className="section-kicker">ANALYSIS COMPLETE</span><h1>分析完成 <span className="success-check"><Check size={22} /></span></h1><p>{analysis.summary || "已完成图片分析。"}</p></section><div className="result-summary"><div><span>识别科目</span><SubjectPill subject={analysis.subject} /></div><div><span>发现错题</span><strong>{analysis.mistakes.length} 道</strong></div><div><span>归档状态</span><strong className="saved"><CheckCircle2 size={17} />已存入错题本</strong></div></div>{analysis.uncertainNote && <div className="notice-card"><Lightbulb size={17} /><span>{analysis.uncertainNote}</span></div>}{analysis.mistakes.length ? <div className="question-stack">{analysis.mistakes.map(item => <MistakeCard key={item.id} item={mistakes.find(saved => saved.id === item.id) || item} onSimilar={requestSimilar} onExport={exportMistake} onDelete={removeMistake} busy={busySimilar === item.id} />)}</div> : <div className="empty-state"><CheckCircle2 size={42} /><h2>没有识别到明确错题</h2><p>如果图片中的批改标记不清楚，可以换一张更清晰的照片再试。</p></div>}<button className="bottom-primary" onClick={() => { setTab("home"); fileRef.current?.click(); }}><Plus size={18} />继续上传</button></>}
+        {tab === "notebook" && <><section className="page-intro notebook-intro"><span className="section-kicker">MY MISTAKE BOOK</span><h1>我的错题本</h1><p>每道认真整理过的题，都在这里等你重新掌握。</p></section><div className="notebook-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索题目或知识点" aria-label="搜索题目或知识点" /></div><div className="filters"><label><Filter size={16} /><select value={subject} onChange={event => setSubject(event.target.value)} aria-label="筛选科目"><option>全部科目</option>{subjects.map(item => <option key={item}>{item}</option>)}</select></label><label><CalendarDays size={16} /><input type="month" value={month} onChange={event => setMonth(event.target.value)} aria-label="筛选月份" /></label></div></div><div className="notebook-count">共 <strong>{filtered.length}</strong> 道错题 {subject !== "全部科目" && <button onClick={() => { setSubject("全部科目"); setQuery(""); setMonth(""); }}>清除筛选 <X size={13} /></button>}</div>{groups.length ? groups.map(([date, items]) => <section className="date-group" key={date}><div className="date-heading"><span className="date-dot" /><h2>{formatDate(date)}</h2><span>{items.length} 道错题</span></div><div className="question-stack">{items.map(item => <MistakeCard key={item.id} item={item} onSimilar={requestSimilar} onExport={exportMistake} onDelete={removeMistake} busy={busySimilar === item.id} showDelete />)}</div></section>) : <div className="empty-state"><BookOpen size={42} /><h2>{mistakes.length ? "没有找到符合条件的题目" : "错题本还是空的"}</h2><p>{mistakes.length ? "试试更换科目、时间或搜索词。" : "上传试卷或作业，错题会自动按科目和时间存入这里。"}</p><button onClick={() => { setTab("home"); setSubject("全部科目"); setQuery(""); setMonth(""); }}>去上传题目 <ArrowRight size={16} /></button></div>}</>}
       </div>
     </main>
     <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" multiple hidden onChange={event => { addFiles(event.target.files); event.target.value = ""; }} />
     <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={event => { addFiles(event.target.files); event.target.value = ""; }} />
-  </div>{printItem && <PrintSheet item={printItem} />}</>;
+  </div></>;
 }
