@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { authenticateAdmin } from "@/lib/api-guard";
 import { hashPassword } from "@/lib/auth";
 import { checkDisplayName, checkPassword, checkWechat, normalizeWechat } from "@/lib/credentials";
+import { extendTrialByWeek } from "@/lib/trial";
 import {
   countAdmins,
   deleteUserRows,
@@ -11,6 +12,7 @@ import {
   setPassword,
   setRole,
   setStatus,
+  setTrialEndsAt,
   setWechat,
 } from "@/lib/users";
 
@@ -30,6 +32,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     status?: unknown;
     password?: unknown;
     wechat?: unknown;
+    trialAction?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -54,6 +57,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   const password = typeof body.password === "string" && body.password ? body.password : null;
   // 没传这个字段就不动；传空串表示清空
   const wechat = typeof body.wechat === "string" ? normalizeWechat(body.wechat) : null;
+  const trialAction = body.trialAction === "extend7" || body.trialAction === "unlimited" ? body.trialAction : null;
+  if (body.trialAction !== undefined && trialAction === null) return fail("试用期操作不正确", 400);
+  if (trialAction === "extend7" && target.trialEndsAt === null) return fail("此账号已长期可用，无需延长试用期", 400);
 
   if (displayName !== null) {
     const invalid = checkDisplayName(displayName);
@@ -92,6 +98,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     if (displayName !== null) await setDisplayName(id, displayName);
     if (role !== null) await setRole(id, role);
     if (wechat !== null) await setWechat(id, wechat);
+    if (trialAction === "extend7") await setTrialEndsAt(id, extendTrialByWeek(target.trialEndsAt!));
+    if (trialAction === "unlimited") await setTrialEndsAt(id, null);
     // setStatus / setPassword 内部会递增 session_epoch，把这个用户的旧 cookie 全部作废
     if (status !== null) await setStatus(id, status);
     if (password !== null) await setPassword(id, await hashPassword(password));

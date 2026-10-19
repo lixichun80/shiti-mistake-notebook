@@ -1,11 +1,11 @@
 import { env } from "cloudflare:workers";
-import { authenticate } from "@/lib/api-guard";
+import { authenticateForAi } from "@/lib/api-guard";
 import { aiConfigured, createSimilar, type SimilarQuestion } from "@/lib/ai";
 
 type Row = { question: string; knowledge_point: string; subject: string; similar_questions: string };
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await authenticate();
+  const auth = await authenticateForAi();
   if ("response" in auth) return auth.response;
   const user = auth.user;
   if (!aiConfigured()) return Response.json({ error: "AI 分析服务尚未配置" }, { status: 503 });

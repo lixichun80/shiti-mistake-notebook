@@ -14,6 +14,21 @@ const mistakeSchema = {
     subject: { type: "string" },
     summary: { type: "string" },
     uncertainNote: { type: "string" },
+    gradingMode: { type: "string", enum: ["marked", "unmarked", "mixed"] },
+    grading: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          pageNumber: { type: "integer" },
+          questionLabel: { type: "string" },
+          verdict: { type: "string", enum: ["correct", "incorrect", "uncertain"] },
+          comment: { type: "string" },
+        },
+        required: ["pageNumber", "questionLabel", "verdict", "comment"],
+      },
+    },
     mistakes: {
       type: "array",
       items: {
@@ -31,7 +46,7 @@ const mistakeSchema = {
       },
     },
   },
-  required: ["subject", "summary", "uncertainNote", "mistakes"],
+  required: ["subject", "summary", "uncertainNote", "gradingMode", "grading", "mistakes"],
 };
 
 const similarSchema = {
@@ -63,7 +78,8 @@ export type AnalyzedMistake = {
   reasoning: string;
   knowledgePoint: string;
 };
-export type Analysis = { subject: string; summary: string; uncertainNote: string; mistakes: AnalyzedMistake[] };
+export type GradedQuestion = { pageNumber: number; questionLabel: string; verdict: "correct" | "incorrect" | "uncertain"; comment: string };
+export type Analysis = { subject: string; summary: string; uncertainNote: string; gradingMode: "marked" | "unmarked" | "mixed"; grading: GradedQuestion[]; mistakes: AnalyzedMistake[] };
 export type SimilarQuestion = { question: string; answer: string; explanation: string };
 
 export function aiConfigured() { return Boolean(env.DEEPSEEK_API_KEY); }
@@ -91,12 +107,13 @@ export async function analyzePages(images: Array<{ mime: string; base64: string 
   const input = [{
     role: "user",
     content: [
-      { type: "input_text", text: "请分析这些试卷或作业图片。先判断科目；只提取有明确证据表明做错的题目，例如红笔叉号、扣分、批改纠错或学生答案和明确标准答案冲突。不要猜测模糊题、空白题或看不清的文字；遇到不确定情况在 uncertainNote 说明。逐题完整抄录题意和学生错误答案，给出正确答案、面向学生的分步解题思路、核心知识点。图片按传入顺序编号，从第 1 页开始。全部用简体中文。若无明确错题，mistakes 返回空数组。" },
+      { type: "input_text", text: "请批改并分析这些试卷或作业图片。图片按传入顺序编号，从第 1 页开始。先判断科目，以及每页是否已有老师的批改标记：全都有则 gradingMode=marked，全都没有则 unmarked，两种都有则 mixed。逐题读取清晰可辨的题目和学生作答。已有批改标记的题，优先依据明确的红笔叉号、扣分、纠错等判定；不要把印刷的红色内容当成批改。没有批改标记的题，你要独立解题并将学生作答与正确答案逐题比较，给出 correct 或 incorrect。每道已作答且可辨认的题都写入 grading，questionLabel 用图片上的题号（没有题号则用简短题目描述），comment 简要说明判定依据。题目、作答、标准或评分规则不清楚，或存在合理的多种答案时，verdict=uncertain，不得臆断为错题；空白题也列为 uncertain，并在 comment 指出未作答。只有能够确认错误的题才写入 mistakes，且必须在 grading 中对应 incorrect。对每道错题完整抄录题意与学生错误答案，给出正确答案、面向学生的分步解题思路及核心知识点。不得编造看不清的文字、作答或批改结果；有遗漏或不确定情况在 uncertainNote 说明。summary 简述本次批改和分析结果。全部用简体中文。若无明确错题，mistakes 返回空数组。" },
       ...images.map(image => ({ type: "input_image", image_url: `data:${image.mime};base64,${image.base64}`, detail: "high" })),
     ],
   }];
   const result = await requestAi(input, "wrong_questions", mistakeSchema) as Analysis;
-  if (!result || !Array.isArray(result.mistakes) || typeof result.subject !== "string") throw new Error("AI 返回的数据格式不完整");
+  if (!result || !Array.isArray(result.mistakes) || !Array.isArray(result.grading) || typeof result.subject !== "string") throw new Error("AI 返回的数据格式不完整");
+  result.grading = result.grading.slice(0, 100).filter(item => item && Number.isInteger(item.pageNumber) && typeof item.questionLabel === "string" && ["correct", "incorrect", "uncertain"].includes(item.verdict));
   result.mistakes = result.mistakes.slice(0, 30).filter(item => item.question && item.reasoning && item.correctAnswer);
   return result;
 }

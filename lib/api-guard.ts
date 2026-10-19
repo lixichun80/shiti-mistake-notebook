@@ -1,4 +1,5 @@
 import { getChatGPTUser, type ChatGPTUser } from "@/app/chatgpt-auth";
+import { isTrialExpired } from "@/lib/trial";
 
 /**
  * 拾题 · 智能错题本 —— 接口侧的认证入口
@@ -42,5 +43,20 @@ export async function authenticateAdmin(): Promise<AuthResult> {
   if ("response" in result) return result;
   if (result.user.role !== "admin") return { response: fail("需要管理员权限", 403) };
 
+  return result;
+}
+
+/** AI operations are available during the trial, or indefinitely after admin activation. */
+export async function authenticateForAi(): Promise<AuthResult> {
+  const result = await authenticate();
+  if ("response" in result) return result;
+  if (result.user.role !== "admin" && isTrialExpired(result.user.trialEndsAt)) {
+    return {
+      response: Response.json(
+        { error: "7 天免费体验已结束。已有错题仍可查看，请联系管理员延长或开通使用权限。", code: "TRIAL_EXPIRED" },
+        { status: 403, headers: { "Cache-Control": "no-store" } },
+      ),
+    };
+  }
   return result;
 }

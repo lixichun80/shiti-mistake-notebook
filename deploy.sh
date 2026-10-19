@@ -112,7 +112,7 @@ node scripts/dump-schema.mjs > "$SCHEMA_JSON" || fail "复查库结构失败"
 SHITI_SCHEMA_JSON="$SCHEMA_JSON" node -e '
 const fs = require("node:fs");
 const schema = JSON.parse(fs.readFileSync(process.env.SHITI_SCHEMA_JSON, "utf8"));
-const missing = ["role", "status", "session_epoch", "last_login_at", "wechat"]
+const missing = ["role", "status", "session_epoch", "last_login_at", "wechat", "trial_ends_at"]
   .filter((col) => !(schema.users || []).includes(col));
 if (missing.length) {
   console.error("users 表缺少列：" + missing.join("、"));
@@ -187,6 +187,10 @@ esac
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/login")
 [ "$code" = "200" ] || fail "/login 匿名访问返回 $code，应为 200"
 pass "/login 匿名可访问"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/")
+[ "$code" = "200" ] || fail "/ 公开首页返回 $code，应为 200"
+pass "/ 公开首页可访问"
 
 # 未登录必须 401
 code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/api/mistakes")

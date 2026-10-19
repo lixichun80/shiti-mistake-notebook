@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `trial_ends_at` text;

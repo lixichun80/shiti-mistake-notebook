@@ -1,6 +1,6 @@
 ﻿# 拾题 · 智能错题本
 
-拍照上传试卷/作业 → DeepSeek 视觉模型识别错题 → 归档到错题本 → 按需生成举一反三练习题。
+拍照上传试卷/作业 → DeepSeek 视觉模型结合已有批改或自动逐题批改 → 归档错题 → 按需生成举一反三练习题。
 
 ## 技术栈
 
@@ -38,8 +38,8 @@ npx wrangler dev --config dist/server/wrangler.json --local \
 - 会话是**无状态签名 cookie**（`shiti_session`）：`base64url(载荷).base64url(HMAC-SHA256)`，
   密钥取 `env.SESSION_SECRET`，有效期 30 天。没有服务端会话表，所以**登出只是删掉浏览器
   cookie，旧 token 在过期前密码学上依然有效**（家庭自用可接受）。
-- 页面：`/login`（`app/login/`）、`/register`（`app/register/`）。未登录访问 `/` 会 `redirect` 到
-  `/login?return_to=…`。
+- 页面：`/` 未登录时展示公开介绍首页，登录后展示学习工作台；`/login`（`app/login/`）、
+  `/register`（`app/register/`）仍独立。后台 `/admin` 继续要求管理员登录。
 - 接口：`POST /api/auth/login`、`POST /api/auth/register`、`POST /api/auth/logout`。
 
 ### cookie 只证明「你是谁」，权限每次回查库
@@ -110,10 +110,10 @@ rm -f /tmp/pw.sql
 ### 注册是完全开放的，这是有意的
 
 `POST /api/auth/register`（`app/api/auth/register/route.ts`）+ 页面 `/register`。**没有**邀请码、
-没有每日额度、没有注册开关——用户是面对面交付客户，注册即等于已成为客户。
+没有每日额度、没有注册开关。自行注册的新账号从创建时起免费体验 7 天。
 
-后果要说清楚：**站点在公网上，任何能访问该域名的人注册后都能调 `/api/analyze` 消耗
-DeepSeek 额度。** 事后唯一的止损手段是管理员在后台停用/删除账号，所以「停用立刻生效」
+后果要说清楚：**站点在公网上，任何能访问该域名的人注册后都能在体验期内调 `/api/analyze` 消耗
+DeepSeek 额度。** 事后可由管理员在后台停用/删除账号，所以「停用立刻生效」
 （见上面的 `session_epoch`）不是锦上添花，是这套取舍能成立的前提。
 
 注册接口写库 + 跑 60 万次 PBKDF2，比登录更容易被刷，所以 nginx 侧
@@ -123,6 +123,11 @@ DeepSeek 额度。** 事后唯一的止损手段是管理员在后台停用/删�
 **微信号注册必填**（`users.wechat`，可空列）：管理员靠它主动加客户微信。只做宽松校验
 （非空、无空白、≤40 字符，`checkWechat()`），因为用户可能填手机号或 QQ 号，这些也能搜到人。
 存量账号和后台新建的账号可以没有微信号，后台列表显示「未填写」，可在「编辑」里补填或清空。
+
+`users.trial_ends_at` 为 NULL 表示长期可用，存量账号和后台创建账号保持 NULL；自行注册时设置为
+创建时间后的 7 天。到期后 `/api/analyze` 和生成类似题的接口返回 403，已有错题仍可查看。
+管理员可在后台延长 7 天或开通长期使用。接口必须通过 `authenticateForAi()` 执行限制，
+不能只禁用前端按钮。
 
 用户名规则和密码长度在 `lib/credentials.ts` 里集中定义，注册接口和后台建号接口共用，
 改规则只改这一处。唯一性靠 `users_username_unique` 索引兜底（捕获约束冲突返回 409），
@@ -251,7 +256,7 @@ SQLite 没有 `ADD COLUMN IF NOT EXISTS`，靠两个脚本补：
 「列已存在就跳过」的判断会失准。要改结构请加新文件。
 
 `deploy.sh` 迁移后还有一条复查断言：重新导出结构，确认 `users` 的 `role` / `status` /
-`session_epoch` / `last_login_at` / `wechat` 真的在。因为 apply-migration 是「看结构决定跳过什么」，
+`session_epoch` / `last_login_at` / `wechat` / `trial_ends_at` 真的在。因为 apply-migration 是「看结构决定跳过什么」，
 万一结构导出拿错了库，它会把该执行的 ALTER 也跳掉而且**不报错**——那样库就少一列，
 后面所有断言照样全绿，直到线上登录才炸。
 
