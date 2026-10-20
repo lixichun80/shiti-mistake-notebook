@@ -1,4 +1,5 @@
 /** Editable Word worksheet. Uses standard OOXML and an uncompressed ZIP, with no network or runtime dependencies. */
+import { parseMath, splitMathText, type MathNode } from "./math-notation";
 export type WorksheetMistake = {
   subject: string;
   question: string;
@@ -20,13 +21,30 @@ const escapeXml = (value: string) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
+function mathXml(node: MathNode): string {
+  switch (node.kind) {
+    case "row": return node.children.map(mathXml).join("");
+    case "symbol": return `<m:r><m:t xml:space="preserve">${escapeXml(node.value)}</m:t></m:r>`;
+    case "sqrt": return `<m:rad><m:radPr><m:degHide m:val="${node.degree ? "0" : "1"}"/></m:radPr><m:deg>${node.degree ? mathXml(node.degree) : ""}</m:deg><m:e>${mathXml(node.body)}</m:e></m:rad>`;
+    case "fraction": return `<m:f><m:num>${mathXml(node.numerator)}</m:num><m:den>${mathXml(node.denominator)}</m:den></m:f>`;
+    case "sup": return `<m:sSup><m:e>${mathXml(node.base)}</m:e><m:sup>${mathXml(node.script)}</m:sup></m:sSup>`;
+    case "sub": return `<m:sSub><m:e>${mathXml(node.base)}</m:e><m:sub>${mathXml(node.script)}</m:sub></m:sSub>`;
+  }
+}
+
+function paragraphContent(line: string): string {
+  return splitMathText(line).map(part => part.kind === "math"
+    ? `<m:oMath>${mathXml(parseMath(part.value))}</m:oMath>`
+    : `<w:r><w:t xml:space="preserve">${escapeXml(part.value)}</w:t></w:r>`).join("") || "<w:r><w:t> </w:t></w:r>";
+}
+
 function paragraphs(value: string, style = "Normal"): string {
   return value
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map(
       (line) =>
-        `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`,
+        `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr>${paragraphContent(line)}</w:p>`,
     )
     .join("");
 }
@@ -38,7 +56,7 @@ function writingSpace(): string {
   ).join("");
 }
 const ns =
-  'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
 const xml = (value: string) =>
   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' + value;
 

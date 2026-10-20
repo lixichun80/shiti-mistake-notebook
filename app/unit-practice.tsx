@@ -1,5 +1,7 @@
 "use client";
 
+import MathText from "./math-text";
+
 import { useRef, useState } from "react";
 import { ArrowRight, CheckCircle2, Download, FileText, Lightbulb, LoaderCircle, RotateCcw, Sparkles } from "lucide-react";
 import type { PracticeDetail, PracticeSummary } from "@/lib/practice-types";
@@ -149,7 +151,7 @@ export default function UnitPractice({ subjects, papers, initialSubject, initial
       {showGrading && <div className="practice-score" role="status"><CheckCircle2 size={20} /><span>批改完成：正确 {paper.correctCount} 道，错误 {paper.incorrectCount} 道{paper.uncertainCount ? `，待核对 ${paper.uncertainCount} 道` : ""}。</span><button type="button" onClick={() => { const blank = paper.questions.map(() => ""); setAnswers(blank); setRetaking(true); try { window.sessionStorage.setItem(draftKey(paper.id), JSON.stringify(blank)); } catch { /* Browser storage may be disabled. */ } }} disabled={trialExpired}><RotateCcw size={15} />重新作答</button></div>}
       <div className="practice-questions">{paper.questions.map((item, index) => {
         const gradeItem = showGrading ? paper.grading[index] : null;
-        return <article className="practice-question" key={`${paper.id}-${index}`}><div className="practice-question-title"><span>{String(index + 1).padStart(2, "0")}</span><div><small>{item.knowledgePoint}</small><h3>{item.question}</h3></div></div><label htmlFor={`practice-answer-${paper.id}-${index}`}>我的作答</label><textarea id={`practice-answer-${paper.id}-${index}`} value={answers[index] || ""} onChange={event => updateAnswer(index, event.target.value)} maxLength={2000} disabled={showGrading || busy === "grade"} placeholder="在这里写下答案或解题过程" rows={3} />{gradeItem && <div className={`practice-feedback ${gradeItem.verdict}`}><strong>{gradeItem.verdict === "correct" ? "回答正确" : gradeItem.verdict === "incorrect" ? "需要订正" : "建议人工核对"}</strong><p>{gradeItem.comment}</p><p><b>参考答案：</b>{gradeItem.answer}</p><p><b>解析：</b>{gradeItem.explanation}</p></div>}</article>;
+        return <article className="practice-question" key={`${paper.id}-${index}`}><div className="practice-question-title"><span>{String(index + 1).padStart(2, "0")}</span><div><small>{item.knowledgePoint}</small><h3><MathText value={item.question} /></h3></div></div><label htmlFor={`practice-answer-${paper.id}-${index}`}>我的作答</label><textarea id={`practice-answer-${paper.id}-${index}`} value={answers[index] || ""} onChange={event => updateAnswer(index, event.target.value)} maxLength={2000} disabled={showGrading || busy === "grade"} placeholder="在这里写下答案或解题过程" rows={3} />{gradeItem && <div className={`practice-feedback ${gradeItem.verdict}`}><strong>{gradeItem.verdict === "correct" ? "回答正确" : gradeItem.verdict === "incorrect" ? "需要订正" : "建议人工核对"}</strong><p><MathText value={gradeItem.comment} /></p><p><b>参考答案：</b><MathText value={gradeItem.answer} /></p><p><b>解析：</b><MathText value={gradeItem.explanation} /></p></div>}</article>;
       })}</div>
       {!showGrading && <div className="practice-submit"><p><Lightbulb size={16} />提交后由 AI 逐题批改；答案和解析仅供学习参考。</p><button type="button" className="practice-primary" onClick={grade} disabled={busy !== null || trialExpired || aiReady === false}>{busy === "grade" ? <><LoaderCircle size={17} className="spin" />正在批改...</> : <>提交批改 <ArrowRight size={16} /></>}</button></div>}
     </section>}

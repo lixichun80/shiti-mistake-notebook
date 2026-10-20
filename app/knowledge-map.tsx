@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { ArrowRight, BookOpen, Lightbulb, Network, Sparkles } from "lucide-react";
 import { buildKnowledgeMap, type KnowledgeEvidence, type KnowledgeNode } from "@/lib/knowledge-map";
 import type { PracticeSummary } from "@/lib/practice-types";
+import MathText from "./math-text";
 
 type Mistake = {
   id: string; uploadId: string; subject: string; knowledgePoint: string;
@@ -62,7 +63,7 @@ export default function KnowledgeMap({ mistakes, papers, onPractice, onOpenMista
           {selected && <><span className={`knowledge-priority ${selected.priority}`}>{priorityLabel[selected.priority]}</span><h2>{selected.name}</h2><p className="knowledge-detail-subject">{selected.subject} · 来自 {selected.sessionCount} 次作业或练习</p>
             <div className="knowledge-counts"><div><strong>{selected.total}</strong><span>错误记录</span></div><div><strong>{selected.mistakeCount}</strong><span>归档错题</span></div><div><strong>{selected.practiceCount}</strong><span>单元练习</span></div></div>
             <div className="knowledge-advice"><Lightbulb size={18} /><p>{selected.priority === "high" ? "这个知识点跨多次作业或练习重复出错。建议先复述概念、梳理基本步骤，再针对性练习。" : "先检查概念、公式或解题步骤是否理解，再用少量练习验证。"}</p></div>
-            {relatedMistakes.length > 0 && <div className="knowledge-examples"><h3>相关错题</h3>{relatedMistakes.map(item => <button type="button" key={item.id} onClick={() => onOpenMistake(item)}><BookOpen size={15} /><span>{item.question}</span><ArrowRight size={14} /></button>)}</div>}
+            {relatedMistakes.length > 0 && <div className="knowledge-examples"><h3>相关错题</h3>{relatedMistakes.map(item => <button type="button" key={item.id} onClick={() => onOpenMistake(item)}><BookOpen size={15} /><span><MathText value={item.question} /></span><ArrowRight size={14} /></button>)}</div>}
             <button type="button" className="knowledge-practice-cta" onClick={() => onPractice(selected.subject, selected.name)}><Sparkles size={16} />围绕这个知识点出卷 <ArrowRight size={15} /></button>
           </>}
         </aside>
