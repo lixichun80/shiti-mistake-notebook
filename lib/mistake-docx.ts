@@ -1,4 +1,5 @@
 /** Editable Word worksheet. Uses standard OOXML and an uncompressed ZIP, with no network or runtime dependencies. */
+import { parseMath, splitMathText, type MathNode } from "./math-notation";
 export type WorksheetMistake = {
   subject: string;
   question: string;
@@ -20,13 +21,30 @@ const escapeXml = (value: string) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
+function mathXml(node: MathNode): string {
+  switch (node.kind) {
+    case "row": return node.children.map(mathXml).join("");
+    case "symbol": return `<m:r><m:t xml:space="preserve">${escapeXml(node.value)}</m:t></m:r>`;
+    case "sqrt": return `<m:rad><m:radPr><m:degHide m:val="${node.degree ? "0" : "1"}"/></m:radPr><m:deg>${node.degree ? mathXml(node.degree) : ""}</m:deg><m:e>${mathXml(node.body)}</m:e></m:rad>`;
+    case "fraction": return `<m:f><m:num>${mathXml(node.numerator)}</m:num><m:den>${mathXml(node.denominator)}</m:den></m:f>`;
+    case "sup": return `<m:sSup><m:e>${mathXml(node.base)}</m:e><m:sup>${mathXml(node.script)}</m:sup></m:sSup>`;
+    case "sub": return `<m:sSub><m:e>${mathXml(node.base)}</m:e><m:sub>${mathXml(node.script)}</m:sub></m:sSub>`;
+  }
+}
+
+function paragraphContent(line: string): string {
+  return splitMathText(line).map(part => part.kind === "math"
+    ? `<m:oMath>${mathXml(parseMath(part.value))}</m:oMath>`
+    : `<w:r><w:t xml:space="preserve">${escapeXml(part.value)}</w:t></w:r>`).join("") || "<w:r><w:t> </w:t></w:r>";
+}
+
 function paragraphs(value: string, style = "Normal"): string {
   return value
     .replace(/\r\n?/g, "\n")
     .split("\n")
     .map(
       (line) =>
-        `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`,
+        `<w:p><w:pPr><w:pStyle w:val="${style}"/></w:pPr>${paragraphContent(line)}</w:p>`,
     )
     .join("");
 }
@@ -38,7 +56,7 @@ function writingSpace(): string {
   ).join("");
 }
 const ns =
-  'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+  'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
 const xml = (value: string) =>
   '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' + value;
 
@@ -207,4 +225,54 @@ export function mistakeDocxFilename(item: WorksheetMistake): string {
       .slice(0, 90)
       .trim() + ".docx"
   );
+}
+
+export type UnitWorksheet = {
+  subject: string;
+  unitName: string;
+  gradeLevel: string;
+  questions: { question: string; answer: string; explanation: string; knowledgePoint: string }[];
+};
+
+/** A4 editable worksheet; answers start on a separate page. */
+export function makeUnitPaperDocx(paper: UnitWorksheet): Uint8Array<ArrayBuffer> {
+  const title = `${paper.subject} · ${paper.unitName}单元练习卷`;
+  const body = [
+    paragraphs(title, "Title"),
+    paragraphs([paper.gradeLevel, `${paper.questions.length} 道题`].filter(Boolean).join(" · "), "Subtitle"),
+    paragraphs("姓名：________________    日期：________________    得分：________", "Subtitle"),
+    paragraphs("请独立完成练习，答案和解析在文档后半部分。", "Normal"),
+    ...paper.questions.flatMap((item, index) => [
+      paragraphs(`${index + 1}. ${item.question}`, "Question"),
+      writingSpace(),
+    ]),
+    '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
+    paragraphs("参考答案与解析", "Title"),
+    ...paper.questions.flatMap((item, index) => [
+      paragraphs(`${index + 1}. ${item.knowledgePoint}`, "Question"),
+      paragraphs(`答案：${item.answer}`),
+      paragraphs(`解析：${item.explanation}`),
+    ]),
+    '<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:header="567" w:footer="567"/></w:sectPr>',
+  ].join("");
+  const styles = `<w:styles ${ns}>
+    <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:sz w:val="24"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+    <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
+    <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="240"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="666666"/><w:sz w:val="21"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Question"><w:name w:val="Question"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="260" w:after="130"/></w:pPr><w:rPr><w:b/><w:sz w:val="27"/></w:rPr></w:style>
+    </w:styles>`;
+  return zip([
+    ["[Content_Types].xml", xml('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>')],
+    ["_rels/.rels", xml('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>')],
+    ["word/document.xml", xml(`<w:document ${ns}><w:body>${body}</w:body></w:document>`)],
+    ["word/styles.xml", xml(styles)],
+    ["word/_rels/document.xml.rels", xml('<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>')],
+    ["word/footer1.xml", xml(`<w:ftr ${ns}><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:t>拾题 · 第 </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple><w:r><w:t> 页</w:t></w:r></w:p></w:ftr>`) ],
+  ]);
+}
+
+export function unitPaperDocxFilename(paper: Pick<UnitWorksheet, "subject" | "unitName">): string {
+  return `拾题-${paper.subject}-${paper.unitName}-单元练习卷`
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 90).trim() + ".docx";
 }

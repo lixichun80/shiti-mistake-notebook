@@ -16,11 +16,14 @@ const code = ts.transpileModule(source, {
     module: ts.ModuleKind.CommonJS,
   },
 }).outputText;
+const mathCode = ts.transpileModule(readFileSync(new URL("../lib/math-notation.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const mathExports = {};
+vm.runInNewContext(mathCode, { exports: mathExports });
 const exports = {};
-vm.runInNewContext(code, { exports, TextEncoder, Uint8Array, DataView, Date });
+vm.runInNewContext(code, { exports, require: () => mathExports, TextEncoder, Uint8Array, DataView, Date });
 const fixture = {
   subject: "数学",
-  question: "计算：(-3)² + 2 × (-4)\n判断：3 < 5 & 8 > 2。\u0000",
+  question: "计算：(-3)² + 2 × (-4)\n判断：3 < 5 & 8 > 2。\u0000\n再求 √(9) 和 1/2。",
   incorrectAnswer: "-17",
   correctAnswer: "1",
   reasoning: "先算乘方，再算乘除，最后加减。\n保留换行。",
@@ -58,7 +61,7 @@ assert(
 );
 const python = String.raw`
 import sys, zipfile, xml.etree.ElementTree as ET, posixpath
-ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'm': 'http://schemas.openxmlformats.org/officeDocument/2006/math'}
 for i, path in enumerate(sys.argv[1:]):
     with zipfile.ZipFile(path) as z:
         assert z.testzip() is None, 'ZIP integrity/CRC failed'
@@ -68,6 +71,8 @@ for i, path in enumerate(sys.argv[1:]):
         assert '(-3)² + 2 × (-4)' in text
         assert '3 < 5 & 8 > 2' in text
         assert '周练 & <练习>.png' in text
+        assert len(doc.findall('.//m:rad', ns)) >= 1
+        assert len(doc.findall('.//m:f', ns)) >= 1
         assert '我的原答案：-17' in text and '正确答案：1' in text
         assert '\x00' not in text
         assert len(doc.findall('.//w:br[@w:type="page"]', ns)) == 1

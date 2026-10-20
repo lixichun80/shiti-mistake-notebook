@@ -51,3 +51,17 @@ export const mistakes = sqliteTable("mistakes", {
   similarQuestions: text("similar_questions").notNull().default("[]"),
   createdAt: text("created_at").notNull(),
 });
+
+// 单元练习卷只保存当前用户的数据；重做时更新最近一次作答与批改结果。
+export const practicePapers = sqliteTable("practice_papers", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  subject: text("subject").notNull(),
+  unitName: text("unit_name").notNull(),
+  gradeLevel: text("grade_level").notNull().default(""),
+  questions: text("questions").notNull(),
+  answers: text("answers").notNull().default("[]"),
+  grading: text("grading").notNull().default("[]"),
+  createdAt: text("created_at").notNull(),
+  gradedAt: text("graded_at"),
+});
