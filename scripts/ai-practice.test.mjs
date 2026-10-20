@@ -12,7 +12,7 @@ function loadAi(output) {
   const calls = [];
   const fetch = async (_url, options) => {
     calls.push(JSON.parse(options.body));
-    return { ok: true, json: async () => ({ output: [{ content: [{ type: "output_text", text: JSON.stringify(output) }] }] }) };
+    return { ok: true, json: async () => ({ output: [{ content: [{ type: "output_text", text: typeof output === "string" ? output : JSON.stringify(output) }] }] }) };
   };
   vm.runInNewContext(code, { exports, require: name => {
     if (name === "cloudflare:workers") return { env: { DEEPSEEK_API_KEY: "test-key" } };
@@ -45,4 +45,17 @@ test("grading sorts results and never marks blank answers correct", async () => 
   assert.equal(result[0].verdict, "correct");
   assert.equal(result[1].verdict, "incorrect");
   assert.match(result[1].comment, /未作答/);
+});
+
+test("grading repairs raw LaTeX escapes while preserving valid JSON escapes", async () => {
+  const { exports } = loadAi(String.raw`{"grading":[{"index":1,"verdict":"correct","comment":"答案 \(\frac{1}{2}\)\n保持引号 \"与\\路径"}]}`);
+  const result = await exports.gradeUnitPaper([
+    { question: "1/2", answer: "1/2", explanation: "分数", knowledgePoint: "分数" },
+  ], ["1/2"]);
+  assert.equal(result[0].comment, '答案 \\(\\frac{1}{2}\\)\n保持引号 "与\\路径');
+});
+
+test("malformed JSON unrelated to math remains an error", async () => {
+  const { exports } = loadAi('{"grading": [broken]}');
+  await assert.rejects(exports.gradeUnitPaper([], []), /JSON|Unexpected/);
 });

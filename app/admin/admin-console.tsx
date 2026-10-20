@@ -384,6 +384,11 @@ function UserManager({ self }: { self: string }) {
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState<UserModal | null>(null);
   const [notice, setNotice] = useState("");
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const list = (data?.users || []).filter(
     (u) =>
       `${u.username} ${u.displayName} ${u.wechat || ""}`
@@ -504,7 +509,7 @@ function UserManager({ self }: { self: string }) {
                         {u.status === "active" ? "已启用" : "已停用"}
                       </Badge>
                     </td>
-                    <td>{u.trialEndsAt === null ? "长期可用" : Date.parse(u.trialEndsAt) <= Date.now() ? "试用已到期" : `试用至 ${date(u.trialEndsAt)}`}</td>
+                    <td>{u.trialEndsAt === null ? "长期可用" : Date.parse(u.trialEndsAt) <= now ? "试用已到期" : `试用至 ${date(u.trialEndsAt)}`}</td>
                     <td>{u.mistakeCount}</td>
                     <td>{date(u.lastLoginAt)}</td>
                     <td>

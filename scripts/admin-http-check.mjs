@@ -18,6 +18,8 @@ import net from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const liveAi = process.argv.includes("--live-ai");
+if (liveAi && !process.env.DEEPSEEK_API_KEY) throw new Error("--live-ai requires DEEPSEEK_API_KEY");
 const temporary = mkdtempSync(path.join(tmpdir(), "shiti-admin-http-"));
 const secret = randomBytes(32).toString("hex");
 const password = randomBytes(18).toString("base64url");
@@ -95,7 +97,7 @@ async function request(
   body,
   headers = {},
 ) {
-  const response = await fetch(`${base}${url}`, {
+  let response = await fetch(`${base}${url}`, {
     method,
     redirect: "manual",
     headers: {
@@ -104,8 +106,18 @@ async function request(
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(liveAi ? 180_000 : 30_000),
   });
+  if (response.status === 503 && (await response.clone().text()).includes("Your worker restarted mid-request")) {
+    console.error(`Worker transport restart during ${method} ${url}; retrying once.`);
+    await delay(1000);
+    response = await fetch(`${base}${url}`, {
+      method, redirect: "manual",
+      headers: { ...(cookie ? { Cookie: cookie } : {}), ...(body !== undefined ? { "Content-Type": "application/json" } : {}), ...headers },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+    });
+  }
   assert.equal(
     response.status,
     expected,
@@ -126,10 +138,11 @@ try {
   );
   config.name = `shiti-http-${randomBytes(4).toString("hex")}`;
   config.vars = {
-    SESSION_SECRET: secret,
-    DEEPSEEK_API_KEY: "local-e2e-dummy-key",
     TRUST_OAI_HEADERS: "0",
   };
+  writeFileSync(path.join(temporary, ".dev.vars"),
+    `SESSION_SECRET=${JSON.stringify(secret)}\nDEEPSEEK_API_KEY=${JSON.stringify(liveAi ? process.env.DEEPSEEK_API_KEY : "local-e2e-dummy-key")}\n`,
+    { mode: 0o600 });
   delete config.build;
   writeFileSync(configPath, JSON.stringify(config));
   const migrations = readdirSync(path.join(root, "drizzle"))
@@ -229,6 +242,59 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
   assert.notEqual(ordinaryPage.status, 200);
   checks++;
   await request("/api/mistakes", 200, legacy);
+  // Exercise the new paper routes against real D1 without consuming AI quota.
+  const paperQuestions = [{ question: "1+1=?", answer: "2", explanation: "整数加法", knowledgePoint: "整数" }];
+  sql(`INSERT INTO practice_papers (id,user_id,subject,unit_name,grade_level,questions,answers,grading,created_at) VALUES ('http-paper','http-user','数学','整数','七年级','${JSON.stringify(paperQuestions)}','[]','[]',datetime('now'));`);
+  await request("/api/practice-papers", 401);
+  await request("/api/practice-papers", 401, undefined, "POST", {});
+  const paperList = await (await request("/api/practice-papers", 200, user)).json();
+  assert.equal(paperList.papers.length, 1);
+  const paperDetail = await (await request("/api/practice-papers/http-paper", 200, user)).json();
+  assert.equal(paperDetail.paper.questions[0].answer, undefined);
+  assert.equal(paperDetail.paper.questions[0].explanation, undefined);
+  for (const suffix of ["", "/word"]) {
+    await request(`/api/practice-papers/http-paper${suffix}`, 401);
+    await request(`/api/practice-papers/http-paper${suffix}`, 404, admin);
+  }
+  const word = await request("/api/practice-papers/http-paper/word", 200, user);
+  assert.match(word.headers.get("content-type"), /wordprocessingml/);
+  assert.equal(new DataView(await word.arrayBuffer()).getUint32(0, true), 0x04034b50);
+  await request("/api/practice-papers", 400, user, "POST", { subject: "数学", unitName: "整数", count: 3 });
+  await request("/api/practice-papers/http-paper/grade", 401, undefined, "POST", { answers: ["2"] });
+  await request("/api/practice-papers/http-paper/grade", 404, admin, "POST", { answers: ["2"] });
+  await request("/api/practice-papers/http-paper/grade", 400, user, "POST", { answers: [""] });
+  if (liveAi) {
+    const generated = await (await request("/api/practice-papers", 201, user, "POST", {
+      subject: "数学", unitName: "10以内的整数加减法", gradeLevel: "一年级", count: 5,
+    })).json();
+    assert.equal(generated.paper.questions.length, 5);
+    assert.ok(generated.paper.questions.every(item => !Object.hasOwn(item, "answer")));
+    const graded = await (await request(`/api/practice-papers/${generated.paper.id}/grade`, 200, user, "POST", {
+      answers: ["1", "", "", "", ""],
+    })).json();
+    assert.equal(graded.paper.grading.length, 5);
+    assert.ok(graded.paper.grading.slice(1).every(item => item.verdict === "incorrect"));
+    assert.ok(graded.paper.grading.every(item => item.answer && item.explanation));
+    await request(`/api/practice-papers/${generated.paper.id}/word`, 200, user);
+    console.log("Live AI generation, grading and Word download passed in isolated storage.");
+    const homework = new FormData();
+    homework.append("files", new Blob([readFileSync(path.join(root, "scripts/fixtures/homework-grading.png"))], { type: "image/png" }), "homework.png");
+    const analysisResponse = await fetch(`${base}/api/analyze`, {
+      method: "POST", headers: { Cookie: user }, body: homework,
+      signal: AbortSignal.timeout(180_000),
+    });
+    assert.equal(analysisResponse.status, 200, "Live homework analysis must succeed");
+    const analysis = await analysisResponse.json();
+    assert.equal(analysis.gradingMode, "unmarked");
+    assert.equal(analysis.grading.length, 3);
+    assert.equal(analysis.grading.filter(item => item.verdict === "incorrect").length, 1);
+    assert.equal(analysis.mistakes.length, 1);
+    assert.equal(analysis.mistakes[0].correctAnswer.replace(/\\[()]/g, "").trim(), "2");
+    console.log("Live photo grading passed: three answers checked, one incorrect answer archived.");
+    // Later legacy assertions expect only the initial fixture upload/mistake.
+    for (const mistake of analysis.mistakes) await request(`/api/mistakes/${mistake.id}`, 200, user, "DELETE");
+    await request(`/api/admin/uploads/${analysis.uploadId}`, 200, admin, "DELETE");
+  }
   await request("/api/auth/login", 401, undefined, "POST", {
     username: "httpuser",
     password: "wrong-password",
@@ -320,6 +386,9 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
   const expired = await request("/api/mistakes/missing/similar", 403, registrationCookie, "POST", { count: 1 });
   assert.equal((await expired.json()).code, "TRIAL_EXPIRED");
   await request("/api/analyze", 403, registrationCookie, "POST", {});
+  await request("/api/practice-papers", 200, registrationCookie);
+  await request("/api/practice-papers", 403, registrationCookie, "POST", {});
+  await request("/api/practice-papers/http-paper/grade", 403, registrationCookie, "POST", { answers: ["2"] });
   await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { trialAction: "extend7" });
   await request("/api/mistakes/missing/similar", 404, registrationCookie, "POST", { count: 1 });
   await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { trialAction: "unlimited" });
@@ -340,8 +409,11 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
   assert.equal((await findUser("httpcreated")).wechat, null);
   assert.equal((await findUser("httpcreated")).trialEndsAt, null);
   await request(`/api/admin/users/${created.id}`, 200, admin, "DELETE");
+  sql(`INSERT INTO practice_papers (id,user_id,subject,unit_name,grade_level,questions,answers,grading,created_at) VALUES ('http-delete-paper','${registered.id}','数学','整数','','${JSON.stringify(paperQuestions)}','[]','[]',datetime('now'));`);
+  await request(`/api/admin/users/${registered.id}`, 200, admin, "DELETE");
+  assert.match(sql("SELECT COUNT(*) AS remaining FROM practice_papers WHERE id='http-delete-paper';"), /"remaining":\s*0/);
   console.log(
-    `Admin HTTP checks passed (${checks} requests/assertions). No real AI calls made.`,
+    `Admin HTTP checks passed (${checks} requests/assertions). ${liveAi ? "Live AI tested." : "No real AI calls made."}`,
   );
   if (process.argv.includes("--keep-server")) {
     sql(`INSERT INTO uploads VALUES ('preview-batch','http-user','数学','[]','["数学周练.png"]',datetime('now'));
@@ -358,6 +430,9 @@ INSERT INTO mistakes VALUES ('preview-english','preview-batch','http-user','英�
     });
     process.stdin.pause();
   }
+} catch (error) {
+  console.error(logs);
+  throw error;
 } finally {
   if (child && child.exitCode === null) {
     child.kill();

@@ -5,7 +5,27 @@ type AiResponse = { output?: Array<{ type?: string; content?: Array<{ type?: str
 
 function parseJsonOutput(raw: string): unknown {
   const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Some model responses contain raw LaTeX escapes despite JSON-schema mode.
+    // Preserve valid JSON escapes and repair backslashes only inside strings.
+    let repaired = "";
+    let inString = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') inString = !inString;
+      if (inString && char === "\\" && i + 1 < text.length) {
+        const next = text[i + 1];
+        const rawMath = /^\\(?:frac|tfrac|text|times|theta|tan|right|begin|beta|bar|boxed|binom|neq|nabla|rho|vec)\b/.test(text.slice(i));
+        repaired += !'"\\/bfnrtu'.includes(next) || rawMath ? "\\\\" + next : char + next;
+        i++;
+      } else {
+        repaired += char;
+      }
+    }
+    return JSON.parse(repaired);
+  }
 }
 
 const mistakeSchema = {
