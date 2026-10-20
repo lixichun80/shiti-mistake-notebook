@@ -355,7 +355,8 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
   });
   await request("/api/admin/mistakes/missing", 404, admin, "DELETE");
   await request("/api/admin/mistakes?page=-1", 400, admin);
-  await request("/api/admin/system", 400, admin, "POST", { action: "test-ai" });
+  const probe = await request("/api/admin/system", liveAi ? 200 : 400, admin, "POST", { action: "test-ai" });
+  if (liveAi) assert.equal((await probe.json()).ok, true);
   await request("/api/admin/uploads/http-batch", 200, admin, "DELETE");
   const empty = await (await request("/api/admin/mistakes", 200, admin)).json();
   assert.equal(empty.total, 0);
