@@ -68,7 +68,7 @@ export default function RegisterForm() {
 
         <span className="section-kicker">01 / SIGN UP</span>
         <h1>创建账号</h1>
-        <p className="login-subtitle">注册后立刻拥有自己的错题本，和别人互不可见。</p>
+        <p className="login-subtitle">新用户注册即可免费体验 7 天。体验到期后仍可查看已有错题。</p>
 
         <form className="login-form" onSubmit={submit}>
           <label>

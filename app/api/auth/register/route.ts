@@ -80,7 +80,7 @@ export async function POST(request: Request) {
 
   const passwordHash = await hashPassword(password);
   try {
-    await insertUser({ id, username, passwordHash, displayName: name, wechat });
+    await insertUser({ id, username, passwordHash, displayName: name, wechat, startTrial: true });
   } catch (error) {
     // 唯一性交给 users_username_unique 索引来判。**不要**写成「先查有没有，再插」——
     // 那中间有竞态，两个请求同时注册同一个名字会双双通过检查。

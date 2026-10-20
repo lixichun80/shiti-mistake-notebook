@@ -44,6 +44,7 @@ type User = {
   createdAt: string;
   lastLoginAt: string | null;
   wechat: string | null;
+  trialEndsAt: string | null;
 };
 type Page = {
   total: number;
@@ -372,7 +373,7 @@ function Overview() {
 }
 type UserModal =
   | { mode: "create" }
-  | { mode: "edit" | "password" | "delete" | "status"; user: User };
+  | { mode: "edit" | "password" | "delete" | "status" | "trial"; user: User };
 function UserManager({ self }: { self: string }) {
   const { data, error, refresh } = useData<{ users: User[] }>(
     "/api/admin/users",
@@ -464,6 +465,7 @@ function UserManager({ self }: { self: string }) {
                   <th>用户</th>
                   <th>微信号</th>
                   <th>角色 / 状态</th>
+                  <th>试用权限</th>
                   <th>错题</th>
                   <th>最近登录</th>
                   <th>操作</th>
@@ -502,6 +504,7 @@ function UserManager({ self }: { self: string }) {
                         {u.status === "active" ? "已启用" : "已停用"}
                       </Badge>
                     </td>
+                    <td>{u.trialEndsAt === null ? "长期可用" : Date.parse(u.trialEndsAt) <= Date.now() ? "试用已到期" : `试用至 ${date(u.trialEndsAt)}`}</td>
                     <td>{u.mistakeCount}</td>
                     <td>{date(u.lastLoginAt)}</td>
                     <td>
@@ -518,6 +521,7 @@ function UserManager({ self }: { self: string }) {
                         >
                           重置密码
                         </button>
+                        {u.trialEndsAt !== null && <button onClick={() => setModal({ mode: "trial", user: u })}>试用期</button>}
                         <button
                           disabled={u.id === self}
                           title={
@@ -583,6 +587,7 @@ function UserEditor({
   const [wechat, setWechat] = useState(user?.wechat || "");
   const [role, setRole] = useState(user?.role || "user");
   const [password, setPassword] = useState("");
+  const [trialAction, setTrialAction] = useState<"extend7" | "unlimited">("extend7");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -592,6 +597,7 @@ function UserEditor({
     password: "重置密码",
     delete: "删除用户",
     status: user?.status === "active" ? "停用用户" : "启用用户",
+    trial: "管理试用期",
   }[modal.mode];
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -621,6 +627,8 @@ function UserEditor({
             ? { displayName: name, role, wechat }
             : modal.mode === "password"
               ? { password }
+              : modal.mode === "trial"
+                ? { trialAction }
               : { status: user?.status === "active" ? "disabled" : "active" };
       await request(
         user
@@ -742,6 +750,14 @@ function UserEditor({
                 ? "停用后立即退出所有设备，该用户暂时无法登录。已有错题保留。"
                 : "启用后，该用户可以重新登录。"}
             </p>
+          )}
+          {modal.mode === "trial" && (
+            <Field label="使用权限">
+              <select value={trialAction} onChange={(e) => setTrialAction(e.target.value as "extend7" | "unlimited")}>
+                <option value="extend7">延长 7 天</option>
+                <option value="unlimited">开通长期使用</option>
+              </select>
+            </Field>
           )}
           {error && (
             <p className="ac-error" role="alert">

@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { trialEndFrom } from "@/lib/trial";
 
 /**
  * 拾题 · 智能错题本 —— `users` 表的读写都收在这里
@@ -26,6 +27,7 @@ export type UserRecord = {
   sessionEpoch: number;
   createdAt: string;
   lastLoginAt: string | null;
+  trialEndsAt: string | null;
 };
 
 type UserRow = {
@@ -38,10 +40,11 @@ type UserRow = {
   session_epoch: number;
   created_at: string;
   last_login_at: string | null;
+  trial_ends_at: string | null;
 };
 
 const COLUMNS =
-  "id, username, password_hash, display_name, role, status, session_epoch, created_at, last_login_at";
+  "id, username, password_hash, display_name, role, status, session_epoch, created_at, last_login_at, trial_ends_at";
 
 function db(): D1Database {
   if (!env.DB) throw new Error("D1 绑定缺失（env.DB），无法读写账号");
@@ -61,6 +64,7 @@ function toRecord(row: UserRow): UserRecord {
     sessionEpoch: Number.isSafeInteger(row.session_epoch) ? row.session_epoch : 0,
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at ?? null,
+    trialEndsAt: row.trial_ends_at ?? null,
   };
 }
 
@@ -93,6 +97,7 @@ export type AdminUserRow = {
   createdAt: string;
   lastLoginAt: string | null;
   wechat: string | null;
+  trialEndsAt: string | null;
   mistakeCount: number;
 };
 
@@ -100,7 +105,7 @@ export type AdminUserRow = {
 export async function listUsersWithCounts(): Promise<AdminUserRow[]> {
   const { results } = await db()
     .prepare(
-      "SELECT u.id, u.username, u.display_name, u.role, u.status, u.created_at, u.last_login_at, u.wechat, " +
+      "SELECT u.id, u.username, u.display_name, u.role, u.status, u.created_at, u.last_login_at, u.wechat, u.trial_ends_at, " +
         "COUNT(m.id) AS mistake_count " +
         "FROM users u LEFT JOIN mistakes m ON m.user_id = u.id " +
         "GROUP BY u.id ORDER BY u.created_at",
@@ -116,6 +121,7 @@ export async function listUsersWithCounts(): Promise<AdminUserRow[]> {
     createdAt: row.created_at,
     lastLoginAt: row.last_login_at ?? null,
     wechat: row.wechat || null,
+    trialEndsAt: row.trial_ends_at ?? null,
     mistakeCount: Number(row.mistake_count ?? 0),
   }));
 }
@@ -138,13 +144,15 @@ export type NewUser = {
   displayName: string;
   role?: UserRole;
   wechat?: string | null;
+  startTrial?: boolean;
 };
 
 export async function insertUser(user: NewUser): Promise<void> {
+  const now = Date.now();
   await db()
     .prepare(
-      "INSERT INTO users (id, username, password_hash, display_name, role, status, session_epoch, created_at, wechat) " +
-        "VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?)",
+      "INSERT INTO users (id, username, password_hash, display_name, role, status, session_epoch, created_at, wechat, trial_ends_at) " +
+        "VALUES (?, ?, ?, ?, ?, 'active', 0, ?, ?, ?)",
     )
     .bind(
       user.id,
@@ -152,10 +160,15 @@ export async function insertUser(user: NewUser): Promise<void> {
       user.passwordHash,
       user.displayName,
       user.role ?? "user",
-      new Date().toISOString(),
+      new Date(now).toISOString(),
       user.wechat || null,
+      user.startTrial ? trialEndFrom(now) : null,
     )
     .run();
+}
+
+export async function setTrialEndsAt(id: string, trialEndsAt: string | null): Promise<void> {
+  await db().prepare("UPDATE users SET trial_ends_at = ? WHERE id = ?").bind(trialEndsAt, id).run();
 }
 
 /** 用户名撞车靠唯一索引发现，不要「先查再插」——那样有竞态。 */

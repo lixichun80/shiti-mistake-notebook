@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { authenticate } from "@/lib/api-guard";
+import { authenticateForAi } from "@/lib/api-guard";
 import { aiConfigured, analyzePages } from "@/lib/ai";
 
 export const runtime = "edge";
@@ -14,7 +14,7 @@ function toBase64(bytes: Uint8Array) {
 }
 
 export async function POST(request: Request) {
-  const auth = await authenticate();
+  const auth = await authenticateForAi();
   if ("response" in auth) return auth.response;
   const user = auth.user;
   if (!aiConfigured()) return Response.json({ error: "AI 分析服务尚未配置，暂时无法处理图片" }, { status: 503 });
@@ -51,7 +51,7 @@ export async function POST(request: Request) {
         return { id, ...item, subject: analysis.subject.trim() || "其他", sourceName: files[Math.max(0, Math.min(files.length - 1, (item.pageNumber || 1) - 1))].name, createdAt, similarQuestions: [] };
       });
       await env.DB.batch(statements);
-      return Response.json({ uploadId, subject: analysis.subject, summary: analysis.summary, uncertainNote: analysis.uncertainNote, mistakes: saved });
+      return Response.json({ uploadId, subject: analysis.subject, summary: analysis.summary, uncertainNote: analysis.uncertainNote, gradingMode: analysis.gradingMode, grading: analysis.grading, mistakes: saved });
     } catch (error) {
       await Promise.allSettled(written.map(key => env.BUCKET!.delete(key)));
       throw error;

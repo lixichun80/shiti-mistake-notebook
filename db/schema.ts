@@ -23,6 +23,8 @@ export const users = sqliteTable("users", {
   lastLoginAt: text("last_login_at"),
   // 微信号，注册时必填，方便管理员主动添加。可空：老账号和管理员建的号可能没有。
   wechat: text("wechat"),
+  // NULL = 长期可用（存量账号及管理员创建的账号）。自行注册的新账号有 7 天试用期。
+  trialEndsAt: text("trial_ends_at"),
 });
 
 export const uploads = sqliteTable("uploads", {

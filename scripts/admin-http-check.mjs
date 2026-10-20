@@ -208,6 +208,8 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
   const admin = token("http-admin", 0);
   const user = token("http-user", 0);
   const legacy = token("http-user");
+  const publicHome = await request("/", 200);
+  assert.match(await publicHome.text(), /新用户免费体验一周/);
   await request("/login", 200);
   await request("/register", 200);
   await request("/api/mistakes", 401);
@@ -301,12 +303,27 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
   const { wechat: _omit, ...noWechat } = registration;
   await request("/api/auth/register", 400, undefined, "POST", { ...noWechat, username: "httpnowechat" });
   await request("/api/auth/register", 400, undefined, "POST", { ...registration, username: "httpspacewx", wechat: "a b" });
-  await request("/api/auth/register", 200, undefined, "POST", registration);
+  const registrationResponse = await request("/api/auth/register", 200, undefined, "POST", registration);
+  const registrationCookie = registrationResponse.headers.get("set-cookie").split(";")[0];
   await request("/api/auth/register", 409, undefined, "POST", registration);
   const findUser = async (username) =>
     (await (await request("/api/admin/users", 200, admin)).json()).users.find((u) => u.username === username);
   const registered = await findUser("httpregistered");
   assert.equal(registered.wechat, "http_registered_wx");
+  assert.ok(registered.trialEndsAt);
+  const trialMs = Date.parse(registered.trialEndsAt) - Date.parse(registered.createdAt);
+  assert.equal(trialMs, 7 * 24 * 60 * 60 * 1000);
+  await request("/api/mistakes", 200, registrationCookie);
+  await request("/api/mistakes/missing/similar", 404, registrationCookie, "POST", { count: 1 });
+  sql("UPDATE users SET trial_ends_at = '2020-01-01T00:00:00.000Z' WHERE username = 'httpregistered';");
+  await request("/api/mistakes", 200, registrationCookie);
+  const expired = await request("/api/mistakes/missing/similar", 403, registrationCookie, "POST", { count: 1 });
+  assert.equal((await expired.json()).code, "TRIAL_EXPIRED");
+  await request("/api/analyze", 403, registrationCookie, "POST", {});
+  await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { trialAction: "extend7" });
+  await request("/api/mistakes/missing/similar", 404, registrationCookie, "POST", { count: 1 });
+  await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { trialAction: "unlimited" });
+  assert.equal((await findUser("httpregistered")).trialEndsAt, null);
   assert.equal(await findUser("httpnowechat"), undefined);
   await request(`/api/admin/users/${registered.id}`, 200, admin, "PATCH", { wechat: "  edited_wx  " });
   assert.equal((await findUser("httpregistered")).wechat, "edited_wx");
@@ -321,6 +338,7 @@ INSERT INTO mistakes VALUES ('http-mistake','http-batch','http-user','数学','1
     })
   ).json();
   assert.equal((await findUser("httpcreated")).wechat, null);
+  assert.equal((await findUser("httpcreated")).trialEndsAt, null);
   await request(`/api/admin/users/${created.id}`, 200, admin, "DELETE");
   console.log(
     `Admin HTTP checks passed (${checks} requests/assertions). No real AI calls made.`,
