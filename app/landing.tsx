@@ -1,9 +1,10 @@
-import { ArrowRight, BookOpen, Camera, CheckCircle2, Lightbulb, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, Camera, CheckCircle2, ClipboardList, Lightbulb, Network, ShieldCheck, Sparkles } from "lucide-react";
+import Link from "next/link";
 
 export default function Landing() {
   return <div className="landing-page">
     <header className="landing-header">
-      <a className="landing-brand" href="/" aria-label="拾题首页"><span className="landing-brand-mark"><BookOpen size={23} /></span><strong>拾题</strong><small>智能错题本</small></a>
+      <Link className="landing-brand" href="/" aria-label="拾题首页"><span className="landing-brand-mark"><BookOpen size={23} /></span><strong>拾题</strong><small>智能错题本</small></Link>
       <nav aria-label="首页导航"><a href="#how-it-works">使用方法</a><a href="#features">功能介绍</a><a className="landing-login" href="/login">登录</a><a className="landing-nav-cta" href="/register">免费体验 <ArrowRight size={15} /></a></nav>
     </header>
 
@@ -28,6 +29,8 @@ export default function Landing() {
         <article><span className="landing-feature-icon purple"><Camera size={22} /></span><h3>拍照就能开始</h3><p>上传试卷、作业或答题卷。一次最多 4 张图片，题目与作答放在一起更容易核对。</p></article>
         <article><span className="landing-feature-icon peach"><CheckCircle2 size={22} /></span><h3>逐题批改分析</h3><p>结合已有批改或智能判题，展示对错、正确答案和分步思路。不清楚的题留待核对。</p></article>
         <article><span className="landing-feature-icon mint"><BookOpen size={22} /></span><h3>错题归档练习</h3><p>错题按科目与时间整理进个人错题本，还能围绕同一知识点生成举一反三练习。</p></article>
+        <article><span className="landing-feature-icon purple"><Network size={22} /></span><h3>知识图谱</h3><p>直观看到哪些知识点反复出错，先回顾概念和方法，再有针对性地练习。</p></article>
+        <article><span className="landing-feature-icon peach"><ClipboardList size={22} /></span><h3>单元练习卷</h3><p>输入单元名称即可出卷，支持在线作答与批改，也可下载带解析的 Word 试卷。</p></article>
       </div></section>
 
       <section className="landing-steps" id="how-it-works"><div><span>01 / 上传</span><strong>拍清题目与作答</strong></div><div><span>02 / 批改</span><strong>查看逐题结果与解析</strong></div><div><span>03 / 巩固</span><strong>收藏错题并继续练习</strong></div></section>

@@ -118,9 +118,15 @@ if (missing.length) {
   console.error("users 表缺少列：" + missing.join("、"));
   process.exit(1);
 }
-' || fail "迁移没有真正生效，users 表缺少新列"
+ const paperMissing = ["id", "user_id", "subject", "unit_name", "grade_level", "questions", "answers", "grading", "created_at", "graded_at"]
+   .filter((col) => !(schema.practice_papers || []).includes(col));
+ if (paperMissing.length) {
+   console.error("practice_papers 表缺少列：" + paperMissing.join("、"));
+   process.exit(1);
+ }
+' || fail "迁移没有真正生效，账号或练习卷表结构不完整"
 rm -f "$SCHEMA_JSON"
-pass "users 表新列已就位"
+pass "账号与练习卷表结构已就位"
 
 echo "==> 播种登录账号"
 # INSERT OR IGNORE 幂等；密码只经环境变量传给 node，不进命令行参数（ps 对所有人可见）

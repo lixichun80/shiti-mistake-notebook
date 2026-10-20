@@ -243,14 +243,15 @@ export async function listUploadFileKeys(userId: string): Promise<string[]> {
  * 删掉这个用户在库里的全部痕迹。
  *
  * `users.id` 是 `uploads.user_id` / `mistakes.user_id` 的取值来源，但**没有外键约束**，
- * 所以级联必须手工做。`mistakes` 先删（它引用 `uploads`），再删 `uploads`，最后删用户。
- * 三条放进一个 batch：D1 的 batch 是事务性的，不会留下删一半的账号。
+ * 所以级联必须手工做。`mistakes` 先删（它引用 `uploads`），再删 `uploads`，
+ * 接着删单元练习卷，最后删用户。D1 batch 是事务性的。
  */
 export async function deleteUserRows(userId: string): Promise<void> {
   const conn = db();
   await conn.batch([
     conn.prepare("DELETE FROM mistakes WHERE user_id = ?").bind(userId),
     conn.prepare("DELETE FROM uploads WHERE user_id = ?").bind(userId),
+    conn.prepare("DELETE FROM practice_papers WHERE user_id = ?").bind(userId),
     conn.prepare("DELETE FROM users WHERE id = ?").bind(userId),
   ]);
 }

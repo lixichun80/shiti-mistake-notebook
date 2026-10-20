@@ -2,6 +2,10 @@
 
 拍照上传试卷/作业 → DeepSeek 视觉模型结合已有批改或自动逐题批改 → 归档错题 → 按需生成举一反三练习题。
 
+知识图谱从已归档错题及每份单元练习卷的最近一次错误作答聚合知识点，显示重复出错的次数与来源；
+它不计算掌握率。单元练习卷由用户填写科目、单元名称（可填年级），生成后保存到
+`practice_papers`，可在线作答、提交 AI 批改，也可下载题目与答案分开的 Word 文件。
+
 ## 技术栈
 
 - **vinext**（Next.js 风格的 RSC 框架，跑在 Cloudflare Workers 上）+ Vite 8 + React 19
@@ -129,6 +133,11 @@ DeepSeek 额度。** 事后可由管理员在后台停用/删除账号，所以�
 管理员可在后台延长 7 天或开通长期使用。接口必须通过 `authenticateForAi()` 执行限制，
 不能只禁用前端按钮。
 
+单元练习卷的生成 `POST /api/practice-papers` 与批改 `POST /api/practice-papers/[id]/grade`
+也必须走 `authenticateForAi()`；列表、详情和既有 Word 下载走普通认证。所有练习卷查询都要
+带 `user_id`，账号删除时从 `practice_papers` 清理数据。生成题目的参考答案留在服务端，
+在线作答页面仅在批改后显示答案；Word 下载始终包含答案页。
+
 用户名规则和密码长度在 `lib/credentials.ts` 里集中定义，注册接口和后台建号接口共用，
 改规则只改这一处。唯一性靠 `users_username_unique` 索引兜底（捕获约束冲突返回 409），
 **不要改成「先查再插」**——那样有竞态。
@@ -178,6 +187,7 @@ AND NOT EXISTS (SELECT 1 FROM users WHERE role='admin')`。限定「系统里一
   `--env <name>` 对应的环境文件），值进不到 worker 的 `env` 里——踩过一次，本地
   `--env-file .dev.vars.local` 让 `SESSION_SECRET` 变成 undefined。
 - 表结构在 `db/schema.ts`，迁移在 `drizzle/`。
+- `practice_papers` 由 `drizzle/0005_tricky_the_anarchist.sql` 创建；部署脚本复查表结构。
 
 ## 部署
 
