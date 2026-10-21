@@ -2,9 +2,11 @@ import { authenticate } from "@/lib/api-guard";
 import { makeUnitPaperDocx, unitPaperDocxFilename } from "@/lib/mistake-docx";
 import { getPracticePaper, parsePaper } from "@/lib/practice-papers";
 
-export async function GET(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
   const auth = await authenticate();
-  if ("response" in auth) return auth.response;
+  if ("response" in auth) return auth.response.status === 401
+    ? Response.redirect(new URL("/login", request.url), 302)
+    : auth.response;
   try {
     const row = await getPracticePaper((await params).id, auth.user.userId);
     if (!row) return Response.json({ error: "练习卷不存在" }, { status: 404 });

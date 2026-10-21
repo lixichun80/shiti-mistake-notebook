@@ -42,7 +42,7 @@ export default function UnitPractice({ subjects, papers, initialSubject, initial
   const [paper, setPaper] = useState<PracticeDetail | null>(null);
   const [answers, setAnswers] = useState<string[]>([]);
   const [retaking, setRetaking] = useState(false);
-  const [busy, setBusy] = useState<"generate" | "grade" | "download" | string | null>(null);
+  const [busy, setBusy] = useState<"generate" | "grade" | string | null>(null);
   const [error, setError] = useState("");
   const paperRef = useRef<HTMLElement>(null);
 
@@ -109,23 +109,6 @@ export default function UnitPractice({ subjects, papers, initialSubject, initial
     finally { setBusy(null); }
   }
 
-  async function downloadWord() {
-    if (!paper) return;
-    setBusy("download"); setError("");
-    try {
-      const response = await fetch(`/api/practice-papers/${paper.id}/word`);
-      if (redirectIfUnauthorized(response)) return;
-      if (!response.ok) throw new Error("Word 下载失败，请重试");
-      const url = URL.createObjectURL(await response.blob());
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `拾题-${paper.subject}-${paper.unitName}-单元练习卷`.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 90) + ".docx";
-      document.body.appendChild(link);
-      try { link.click(); } finally { link.remove(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000); }
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Word 下载失败"); }
-    finally { setBusy(null); }
-  }
-
   const showGrading = Boolean(paper?.gradedAt && !retaking);
   function updateAnswer(index: number, value: string) {
     const next = answers.map((answer, i) => i === index ? value : answer);
@@ -147,7 +130,7 @@ export default function UnitPractice({ subjects, papers, initialSubject, initial
       <button type="button" className="practice-primary" onClick={generate} disabled={busy !== null || trialExpired || aiReady === false}>{busy === "generate" ? <><LoaderCircle size={17} className="spin" />正在出卷...</> : <><Sparkles size={17} />{trialExpired ? "体验已到期" : "生成练习卷"}</>}</button>
       {aiReady === false && <p className="service-note">AI 服务尚未配置，暂时无法生成或批改练习卷。</p>}
     </section>
-    {paper && <section className="practice-paper" ref={paperRef} aria-label="在线练习卷"><div className="practice-paper-head"><div><span className="section-kicker">PRACTICE PAPER</span><h2>{paper.subject} · {paper.unitName}</h2><p>{paper.gradeLevel || "单元练习"} · {paper.questionCount} 道题</p></div><button type="button" className="practice-word" onClick={downloadWord} disabled={busy !== null}>{busy === "download" ? <LoaderCircle size={16} className="spin" /> : <Download size={16} />}下载 Word 试卷</button></div>
+    {paper && <section className="practice-paper" ref={paperRef} aria-label="在线练习卷"><div className="practice-paper-head"><div><span className="section-kicker">PRACTICE PAPER</span><h2>{paper.subject} · {paper.unitName}</h2><p>{paper.gradeLevel || "单元练习"} · {paper.questionCount} 道题</p></div><a className="practice-word" href={busy === null ? `/api/practice-papers/${encodeURIComponent(paper.id)}/word` : undefined} aria-disabled={busy !== null}><Download size={16} />下载 Word 试卷</a></div>
       {showGrading && <div className="practice-score" role="status"><CheckCircle2 size={20} /><span>批改完成：正确 {paper.correctCount} 道，错误 {paper.incorrectCount} 道{paper.uncertainCount ? `，待核对 ${paper.uncertainCount} 道` : ""}。</span><button type="button" onClick={() => { const blank = paper.questions.map(() => ""); setAnswers(blank); setRetaking(true); try { window.sessionStorage.setItem(draftKey(paper.id), JSON.stringify(blank)); } catch { /* Browser storage may be disabled. */ } }} disabled={trialExpired}><RotateCcw size={15} />重新作答</button></div>}
       <div className="practice-questions">{paper.questions.map((item, index) => {
         const gradeItem = showGrading ? paper.grading[index] : null;
