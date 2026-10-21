@@ -1,5 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { PracticeQuestion, PracticeVerdict } from "@/lib/practice-types";
+import type { KnowledgeGuide } from "@/lib/knowledge-types";
+import { practiceBlueprint, type PracticeQuestionKind } from "@/lib/practice-blueprint";
 
 type AiResponse = { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>; error?: { message?: string } };
 
@@ -105,12 +107,24 @@ const unitPaperSchema = {
           answer: { type: "string" },
           explanation: { type: "string" },
           knowledgePoint: { type: "string" },
+          kind: { type: "string", enum: ["concept", "method", "misconception", "application", "synthesis"] },
         },
-        required: ["question", "answer", "explanation", "knowledgePoint"],
+        required: ["question", "answer", "explanation", "knowledgePoint", "kind"],
       },
     },
   },
   required: ["questions"],
+};
+
+const knowledgeGuideSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    coreIdea: { type: "string" },
+    commonMistake: { type: "string" },
+    firstStep: { type: "string" },
+  },
+  required: ["coreIdea", "commonMistake", "firstStep"],
 };
 
 const practiceGradingSchema = {
@@ -190,24 +204,53 @@ export async function createSimilar(question: string, knowledgePoint: string, su
   return result.questions;
 }
 
+export async function createKnowledgeGuide(input: {
+  subject: string; knowledgePoint: string; unitName: string;
+  examples: Array<{ question: string; incorrectAnswer: string; correctAnswer: string }>;
+}): Promise<KnowledgeGuide> {
+  const examples = input.examples.slice(0, 2).map(item => ({
+    question: item.question.slice(0, 350),
+    incorrectAnswer: item.incorrectAnswer.slice(0, 150),
+    correctAnswer: item.correctAnswer.slice(0, 150),
+  }));
+  const prompt = `请为中小学生解释${input.subject}知识点“${input.knowledgePoint}”（单元：${input.unitName || "未指定"}）。用不超过 180 字讲清核心概念；根据提供的错题线索描述一种“可能的误区”，不要断言学生一定如此；最后给出无需直接公布答案的第一步学习建议。不能照抄错题作新题，也不能把猜测写成诊断。错题线索：${JSON.stringify(examples)}。`;
+  const result = await requestAi([{ role: "user", content: [{ type: "input_text", text: prompt }] }], "knowledge_guide", knowledgeGuideSchema) as KnowledgeGuide;
+  if (!result || [result.coreIdea, result.commonMistake, result.firstStep].some(value => typeof value !== "string" || !value.trim() || value.length > 800)) {
+    throw new Error("概念提示生成不完整，请重试");
+  }
+  return {
+    coreIdea: result.coreIdea.trim(),
+    commonMistake: result.commonMistake.trim(),
+    firstStep: result.firstStep.trim(),
+  };
+}
+
 export async function createUnitPaper(input: {
-  subject: string; unitName: string; gradeLevel: string; count: number;
+  subject: string; unitName: string; gradeLevel: string; count: 3 | 5 | 10;
+  focusPoints: string[];
   weakPoints: Array<{ name: string; count: number; example: string }>;
 }): Promise<PracticeQuestion[]> {
+  const plan = practiceBlueprint(input.count);
   const context = JSON.stringify(input.weakPoints.slice(0, 12));
-  const prompt = `请为${input.gradeLevel || "中小学"}${input.subject}的“${input.unitName}”单元生成恰好 ${input.count} 道新的练习题。题目从基础概念到方法运用递进，覆盖该单元的主要知识点；每题有独立可判定的答案、简要解析和知识点名称。不要照抄错题，也不要生成依赖缺失图片或材料才能作答的题。下面是该学生过去的薄弱点数据（仅在确属本单元时优先覆盖；其他单元的内容必须忽略）：${context}。全部使用简体中文。`;
+  const sequence = plan.map((kind, index) => `第${index + 1}题 kind=${kind}`).join("；");
+  const prompt = `请为${input.gradeLevel || "中小学"}${input.subject}的“${input.unitName}”单元生成恰好 ${input.count} 道全新的练习题。严格按顺序与题型蓝图出题：${sequence}。concept 考基础概念，method 考典型方法，misconception 考常见错误辨析，application 考迁移应用，synthesis 考综合运用；每题 kind 必须与对应编号一致。用户确认要覆盖的知识点：${JSON.stringify(input.focusPoints)}，每个点至少在一道题的 knowledgePoint 中使用原名称；如不属于该单元，不得悄悄换成其他知识点。其余题覆盖该单元主要内容。每题有独立可判定的答案和准确、简明的解析。不要照抄错题、重复题干、生成依赖缺失图片或材料才能作答的题。下面是该学生过去的错题线索（只可参考确属本单元的部分）：${context}。全部使用简体中文。`;
   const result = await requestAi([{ role: "user", content: [{ type: "input_text", text: prompt }] }], "unit_practice_paper", unitPaperSchema) as { questions?: PracticeQuestion[] };
-  if (!Array.isArray(result?.questions) || result.questions.length !== input.count || result.questions.some(item =>
+  if (!Array.isArray(result?.questions) || result.questions.length !== input.count || result.questions.some((item, index) =>
     !item || typeof item.question !== "string" || !item.question.trim() || item.question.length > 2500 ||
     typeof item.answer !== "string" || !item.answer.trim() || item.answer.length > 1500 ||
     typeof item.explanation !== "string" || !item.explanation.trim() || item.explanation.length > 3000 ||
-    typeof item.knowledgePoint !== "string" || !item.knowledgePoint.trim() || item.knowledgePoint.length > 100
+    typeof item.knowledgePoint !== "string" || !item.knowledgePoint.trim() || item.knowledgePoint.length > 100 ||
+    item.kind !== plan[index]
   )) {
     throw new Error("练习卷生成不完整，请重试");
   }
+  const normalizedQuestions = result.questions.map(item => item.question.trim().replace(/\s+/g, ""));
+  if (new Set(normalizedQuestions).size !== result.questions.length || input.focusPoints.some(point => !result.questions!.some(item => item.knowledgePoint.trim() === point))) {
+    throw new Error("练习卷未覆盖所选知识点或存在重复题目，请重试");
+  }
   return result.questions.map(item => ({
     question: item.question.trim(), answer: item.answer.trim(),
-    explanation: item.explanation.trim(), knowledgePoint: item.knowledgePoint.trim(),
+    explanation: item.explanation.trim(), knowledgePoint: item.knowledgePoint.trim(), kind: item.kind as PracticeQuestionKind,
   }));
 }
 

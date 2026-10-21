@@ -1,5 +1,6 @@
 /** Editable Word worksheet. Uses standard OOXML and an uncompressed ZIP, with no network or runtime dependencies. */
 import { parseMath, splitMathText, type MathNode } from "./math-notation";
+import { kindForQuestion, practiceKindLabels, type PracticeQuestionKind } from "./practice-blueprint";
 export type WorksheetMistake = {
   subject: string;
   question: string;
@@ -231,25 +232,25 @@ export type UnitWorksheet = {
   subject: string;
   unitName: string;
   gradeLevel: string;
-  questions: { question: string; answer: string; explanation: string; knowledgePoint: string }[];
+  questions: { question: string; answer: string; explanation: string; knowledgePoint: string; kind?: PracticeQuestionKind }[];
 };
 
 /** A4 editable worksheet; answers start on a separate page. */
 export function makeUnitPaperDocx(paper: UnitWorksheet): Uint8Array<ArrayBuffer> {
-  const title = `${paper.subject} · ${paper.unitName}单元练习卷`;
+  const title = `${paper.subject} · ${paper.unitName}${paper.questions.length === 3 ? "概念小测" : "单元练习卷"}`;
   const body = [
     paragraphs(title, "Title"),
     paragraphs([paper.gradeLevel, `${paper.questions.length} 道题`].filter(Boolean).join(" · "), "Subtitle"),
     paragraphs("姓名：________________    日期：________________    得分：________", "Subtitle"),
     paragraphs("请独立完成练习，答案和解析在文档后半部分。", "Normal"),
     ...paper.questions.flatMap((item, index) => [
-      paragraphs(`${index + 1}. ${item.question}`, "Question"),
+      paragraphs(`${index + 1}. 【${practiceKindLabels[kindForQuestion(item.kind)]}】${item.question}`, "Question"),
       writingSpace(),
     ]),
     '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
     paragraphs("参考答案与解析", "Title"),
     ...paper.questions.flatMap((item, index) => [
-      paragraphs(`${index + 1}. ${item.knowledgePoint}`, "Question"),
+      paragraphs(`${index + 1}. ${practiceKindLabels[kindForQuestion(item.kind)]} · ${item.knowledgePoint}`, "Question"),
       paragraphs(`答案：${item.answer}`),
       paragraphs(`解析：${item.explanation}`),
     ]),

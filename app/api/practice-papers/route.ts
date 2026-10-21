@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { authenticate, authenticateForAi } from "@/lib/api-guard";
 import { aiConfigured, createUnitPaper } from "@/lib/ai";
 import { insertPracticePaper, listPracticePapers, paperDetail, paperSummary } from "@/lib/practice-papers";
+import { normalizeKnowledgePoint } from "@/lib/knowledge-types";
 
 export const runtime = "edge";
 
@@ -31,23 +32,32 @@ export async function POST(request: Request) {
   const unitName = typeof body?.unitName === "string" ? body.unitName.trim() : "";
   const gradeLevel = typeof body?.gradeLevel === "string" ? body.gradeLevel.trim() : "";
   const count = body?.count;
-  if (!subject || subject.length > 30 || !unitName || unitName.length > 80 || gradeLevel.length > 30 || (count !== 5 && count !== 10)) {
-    return fail("请填写科目与单元名称，并选择 5 或 10 道题", 400);
+  const rawPoints = body?.focusPoints;
+  const focusPoints = Array.isArray(rawPoints) && rawPoints.every(point => typeof point === "string")
+    ? [...new Set(rawPoints.map(point => normalizeKnowledgePoint(point as string)).filter(Boolean))]
+    : null;
+  if (!subject || subject.length > 30 || !unitName || unitName.length > 80 || gradeLevel.length > 30 ||
+    (count !== 3 && count !== 5 && count !== 10) || !focusPoints || focusPoints.length > Math.min(count, 4) ||
+    focusPoints.some(point => point.length > 100)) {
+    return fail("请填写科目与单元名称，选择 3、5 或 10 道题，并确认最多 4 个知识点", 400);
   }
 
   try {
+    const mapped = await env.DB.prepare("SELECT knowledge_point FROM knowledge_units WHERE user_id = ? AND subject = ? AND unit_name = ?")
+      .bind(auth.user.userId, subject, unitName).all<{ knowledge_point: string }>();
+    const allowedPoints = new Set([...focusPoints, ...mapped.results.map(row => normalizeKnowledgePoint(row.knowledge_point))]);
     const { results } = await env.DB.prepare("SELECT knowledge_point, question FROM mistakes WHERE user_id = ? AND subject = ? ORDER BY created_at DESC LIMIT 100")
       .bind(auth.user.userId, subject).all<{ knowledge_point: string; question: string }>();
     const weak = new Map<string, { name: string; count: number; example: string }>();
     for (const row of results) {
-      const name = row.knowledge_point.trim();
-      if (!name) continue;
+      const name = normalizeKnowledgePoint(row.knowledge_point);
+      if (!name || !allowedPoints.has(name)) continue;
       const prior = weak.get(name);
       if (prior) prior.count++;
       else weak.set(name, { name: name.slice(0, 80), count: 1, example: row.question.slice(0, 160) });
     }
     const questions = await createUnitPaper({
-      subject, unitName, gradeLevel, count,
+      subject, unitName, gradeLevel, count, focusPoints,
       weakPoints: [...weak.values()].sort((a, b) => b.count - a.count).slice(0, 12),
     });
     const id = crypto.randomUUID();

@@ -139,6 +139,9 @@ export default function Dashboard({ name, trialEndsAt, role }: { name: string; t
   const [mobileMenu, setMobileMenu] = useState(false);
   const [practiceSubject, setPracticeSubject] = useState("");
   const [practiceUnit, setPracticeUnit] = useState("");
+  const [practicePoint, setPracticePoint] = useState("");
+  const [knowledgeSubject, setKnowledgeSubject] = useState("");
+  const [knowledgePoint, setKnowledgePoint] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
@@ -264,9 +267,10 @@ export default function Dashboard({ name, trialEndsAt, role }: { name: string; t
     setPapers(current => [item, ...current.filter(saved => saved.id !== item.id)].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
   }
 
-  function openPractice(subjectName = "", unitName = "") {
+  function openPractice(subjectName = "", unitName = "", pointName = "") {
     setPracticeSubject(subjectName);
     setPracticeUnit(unitName);
+    setPracticePoint(pointName);
     setTab("practice");
     setMobileMenu(false);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -326,8 +330,8 @@ export default function Dashboard({ name, trialEndsAt, role }: { name: string; t
           {analysis.mistakes.length ? <div className="question-stack">{analysis.mistakes.map(item => <MistakeCard key={item.id} item={mistakes.find(saved => saved.id === item.id) || item} onSimilar={requestSimilar} onExport={exportMistake} onDelete={removeMistake} busy={busySimilar === item.id} trialExpired={trialExpired} />)}</div> : <div className="empty-state"><CheckCircle2 size={42} /><h2>没有确认的错题</h2><p>如果题目或作答不清晰，请换一张更清晰的照片再试。</p></div>}
           <button className="bottom-primary" onClick={() => { setTab("home"); fileRef.current?.click(); }}><Plus size={18} />继续上传</button>
         </>}
-        {tab === "knowledge" && <KnowledgeMap mistakes={mistakes} papers={papers} onPractice={openPractice} onOpenMistake={item => { setSubject(item.subject); setQuery(item.question.slice(0, 30)); setMonth(""); setTab("notebook"); }} />}
-        {tab === "practice" && <UnitPractice subjects={subjects} papers={papers} initialSubject={practiceSubject} initialUnit={practiceUnit} trialExpired={trialExpired} aiReady={aiReady} onSaved={savePaperSummary} onTrialExpired={() => setTrialExpired(true)} />}
+        {tab === "knowledge" && <KnowledgeMap mistakes={mistakes} papers={papers} initialSubject={knowledgeSubject} initialPoint={knowledgePoint} trialExpired={trialExpired} aiReady={aiReady} onTrialExpired={() => setTrialExpired(true)} onPractice={openPractice} onOpenMistake={item => { setSubject(item.subject); setQuery(item.question.slice(0, 30)); setMonth(""); setTab("notebook"); }} />}
+        {tab === "practice" && <UnitPractice subjects={subjects} papers={papers} weakPoints={mistakes} initialSubject={practiceSubject} initialUnit={practiceUnit} initialPoint={practicePoint} trialExpired={trialExpired} aiReady={aiReady} onSaved={savePaperSummary} onTrialExpired={() => setTrialExpired(true)} onReviewPoint={(subjectName, pointName) => { setKnowledgeSubject(subjectName); setKnowledgePoint(pointName); setTab("knowledge"); }} />}
         {tab === "notebook" && <><section className="page-intro notebook-intro"><span className="section-kicker">MY MISTAKE BOOK</span><h1>我的错题本</h1><p>按题目快速浏览，点开卡片可查看完整答案与解析。</p></section><div className="notebook-toolbar"><div className="search-field"><Search size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索题目或知识点" aria-label="搜索题目或知识点" /></div><div className="filters"><label><Filter size={16} /><select value={subject} onChange={event => setSubject(event.target.value)} aria-label="筛选科目"><option>全部科目</option>{subjects.map(item => <option key={item}>{item}</option>)}</select></label><label><CalendarDays size={16} /><input type="month" value={month} onChange={event => setMonth(event.target.value)} aria-label="筛选月份" /></label></div></div><div className="notebook-count">共 <strong>{filtered.length}</strong> 道错题 {subject !== "全部科目" && <button onClick={() => { setSubject("全部科目"); setQuery(""); setMonth(""); }}>清除筛选 <X size={13} /></button>}</div>{groups.length ? groups.map(([date, items]) => <section className="date-group" key={date}><div className="date-heading"><span className="date-dot" /><h2>{formatDate(date)}</h2><span>{items.length} 道错题</span></div><div className="question-stack notebook-grid">{items.map(item => <MistakeCard key={item.id} item={item} onSimilar={requestSimilar} onExport={exportMistake} onDelete={removeMistake} busy={busySimilar === item.id} trialExpired={trialExpired} showDelete compact />)}</div></section>) : <div className="empty-state"><BookOpen size={42} /><h2>{mistakes.length ? "没有找到符合条件的题目" : "错题本还是空的"}</h2><p>{mistakes.length ? "试试更换科目、时间或搜索词。" : "上传试卷或作业，错题会自动按科目和时间存入这里。"}</p><button onClick={() => { setTab("home"); setSubject("全部科目"); setQuery(""); setMonth(""); }}>去上传题目 <ArrowRight size={16} /></button></div>}</>}
       </div>
     </main>

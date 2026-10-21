@@ -19,8 +19,15 @@ const code = ts.transpileModule(source, {
 const mathCode = ts.transpileModule(readFileSync(new URL("../lib/math-notation.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const mathExports = {};
 vm.runInNewContext(mathCode, { exports: mathExports });
+const blueprintCode = ts.transpileModule(readFileSync(new URL("../lib/practice-blueprint.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const blueprintExports = {};
+vm.runInNewContext(blueprintCode, { exports: blueprintExports });
 const exports = {};
-vm.runInNewContext(code, { exports, require: () => mathExports, TextEncoder, Uint8Array, DataView, Date });
+vm.runInNewContext(code, { exports, require: name => {
+  if (name === "./math-notation") return mathExports;
+  if (name === "./practice-blueprint") return blueprintExports;
+  throw new Error(`Unexpected import: ${name}`);
+}, TextEncoder, Uint8Array, DataView, Date });
 const fixture = {
   subject: "数学",
   question: "计算：(-3)² + 2 × (-4)\n判断：3 < 5 & 8 > 2。\u0000\n再求 √(9) 和 1/2。",
@@ -54,6 +61,15 @@ for (const [index, name] of files.entries()) {
   assert.equal(new DataView(bytes.buffer).getUint32(0, true), 0x04034b50);
   writeFileSync(new URL(`../outputs/${name}`, import.meta.url), bytes);
 }
+const unitFile = "unit-practice-blueprint.docx";
+writeFileSync(new URL(`../outputs/${unitFile}`, import.meta.url), exports.makeUnitPaperDocx({
+  subject: "数学", unitName: "根式与分数", gradeLevel: "八年级",
+  questions: [
+    { question: "写出 \\(\\sqrt{9}\\) 的值", answer: "3", explanation: "算术平方根为非负数", knowledgePoint: "平方根", kind: "concept" },
+    { question: "计算 \\(\\frac{1}{2}+\\frac{1}{2}\\)", answer: "1", explanation: "分母相同，分子相加", knowledgePoint: "分数", kind: "method" },
+    { question: "两个半份共是多少？", answer: "1", explanation: "联系生活情境", knowledgePoint: "分数", kind: "application" },
+  ],
+}));
 assert(
   !/[\\/:*?"<>|\u0000-\u001f]/.test(
     exports.mistakeDocxFilename({ ...fixture, subject: '数/学:*?"<>|' }),
@@ -68,6 +84,12 @@ for i, path in enumerate(sys.argv[1:]):
         for name in z.namelist(): ET.fromstring(z.read(name))
         doc = ET.fromstring(z.read('word/document.xml'))
         text = '\n'.join(n.text or '' for n in doc.findall('.//w:t', ns))
+        if i == 2:
+            assert '根式与分数概念小测' in text
+            assert '基础概念' in text and '典型方法' in text and '迁移应用' in text
+            assert len(doc.findall('.//m:rad', ns)) >= 1 and len(doc.findall('.//m:f', ns)) >= 1
+            assert len(doc.findall('.//w:br[@w:type="page"]', ns)) == 1
+            continue
         assert '(-3)² + 2 × (-4)' in text
         assert '3 < 5 & 8 > 2' in text
         assert '周练 & <练习>.png' in text
@@ -90,7 +112,7 @@ const result = spawnSync(
   [
     "-c",
     python,
-    ...files.map((name) =>
+    ...[...files, unitFile].map((name) =>
       fileURLToPath(new URL(`../outputs/${name}`, import.meta.url)),
     ),
   ],

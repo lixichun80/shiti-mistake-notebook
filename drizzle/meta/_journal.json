@@ -43,6 +43,13 @@
       "when": 1792465235521,
       "tag": "0005_tricky_the_anarchist",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792576805867,
+      "tag": "0006_far_miracleman",
+      "breakpoints": true
     }
   ]
 }

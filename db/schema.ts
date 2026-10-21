@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // 登录账号。`id` 同时是 uploads/mistakes 里的 `user_id`，
 // 播种时默认沿用历史值 "shiti"，否则老错题会因为查不到而看起来"消失"。
@@ -65,3 +65,13 @@ export const practicePapers = sqliteTable("practice_papers", {
   createdAt: text("created_at").notNull(),
   gradedAt: text("graded_at"),
 });
+
+// 用户确认的知识点归属与已生成的概念提示。错误次数仍由原始错题和练习记录计算。
+export const knowledgeUnits = sqliteTable("knowledge_units", {
+  userId: text("user_id").notNull(),
+  subject: text("subject").notNull(),
+  knowledgePoint: text("knowledge_point").notNull(),
+  unitName: text("unit_name").notNull().default(""),
+  guide: text("guide").notNull().default(""),
+  updatedAt: text("updated_at").notNull(),
+}, table => [primaryKey({ columns: [table.userId, table.subject, table.knowledgePoint] })]);

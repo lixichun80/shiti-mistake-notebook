@@ -1,11 +1,14 @@
+import type { PracticeQuestionKind } from "@/lib/practice-blueprint";
+
 export type PracticeQuestion = {
   question: string;
   answer: string;
   explanation: string;
   knowledgePoint: string;
+  kind?: PracticeQuestionKind;
 };
 
-export type PublicPracticeQuestion = Pick<PracticeQuestion, "question" | "knowledgePoint">;
+export type PublicPracticeQuestion = Pick<PracticeQuestion, "question" | "knowledgePoint" | "kind">;
 
 export type PracticeVerdict = "correct" | "incorrect" | "uncertain";
 
@@ -30,6 +33,7 @@ export type PracticeSummary = {
   incorrectCount: number;
   uncertainCount: number;
   wrongKnowledgePoints: string[];
+  correctKnowledgePoints: string[];
 };
 
 export type PracticeDetail = PracticeSummary & {

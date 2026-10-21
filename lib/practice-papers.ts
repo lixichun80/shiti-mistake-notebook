@@ -30,6 +30,7 @@ export function paperSummary(row: PracticePaperRow): PracticeSummary {
     incorrectCount: grading.filter(item => item.verdict === "incorrect").length,
     uncertainCount: grading.filter(item => item.verdict === "uncertain").length,
     wrongKnowledgePoints: grading.filter(item => item.verdict === "incorrect").map(item => item.knowledgePoint),
+    correctKnowledgePoints: grading.filter(item => item.verdict === "correct").map(item => item.knowledgePoint),
   };
 }
 
@@ -37,7 +38,7 @@ export function paperDetail(row: PracticePaperRow): PracticeDetail {
   const { questions, answers, grading } = parsePaper(row);
   return {
     ...paperSummary(row),
-    questions: questions.map(item => ({ question: item.question, knowledgePoint: item.knowledgePoint })),
+    questions: questions.map(item => ({ question: item.question, knowledgePoint: item.knowledgePoint, kind: item.kind })),
     answers, grading,
   };
 }
