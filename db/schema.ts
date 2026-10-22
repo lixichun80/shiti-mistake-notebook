@@ -1,4 +1,4 @@
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // 登录账号。`id` 同时是 uploads/mistakes 里的 `user_id`，
 // 播种时默认沿用历史值 "shiti"，否则老错题会因为查不到而看起来"消失"。
@@ -75,3 +75,14 @@ export const knowledgeUnits = sqliteTable("knowledge_units", {
   guide: text("guide").notNull().default(""),
   updatedAt: text("updated_at").notNull(),
 }, table => [primaryKey({ columns: [table.userId, table.subject, table.knowledgePoint] })]);
+
+// 作文照片仅用于本次识别和分析；长期只保存用户确认的原文及报告。
+export const essayReports = sqliteTable("essay_reports", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  promptText: text("prompt_text").notNull().default(""),
+  originalText: text("original_text").notNull(),
+  gradeLevel: text("grade_level").notNull().default(""),
+  reportJson: text("report_json").notNull(),
+  createdAt: text("created_at").notNull(),
+}, table => [index("essay_reports_user_created_idx").on(table.userId, table.createdAt)]);

@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { PracticeQuestion, PracticeVerdict } from "@/lib/practice-types";
+import { parseEssayExtraction, parseEssayReport, type EssayExtraction, type EssayReport } from "@/lib/essay-types";
 import type { KnowledgeGuide } from "@/lib/knowledge-types";
 import { practiceBlueprint, type PracticeQuestionKind } from "@/lib/practice-blueprint";
 
@@ -148,6 +149,61 @@ const practiceGradingSchema = {
   required: ["grading"],
 };
 
+const essayFeedbackSchema = {
+  type: "object", additionalProperties: false,
+  properties: { strength: { type: "string" }, evidence: { type: "string" }, improvement: { type: "string" } },
+  required: ["strength", "evidence", "improvement"],
+};
+
+const essayExtractionSchema = {
+  type: "object", additionalProperties: false,
+  properties: {
+    promptText: { type: "string" }, essayText: { type: "string" },
+    uncertainNote: { type: "string" }, teacherMarksNote: { type: "string" },
+  },
+  required: ["promptText", "essayText", "uncertainNote", "teacherMarksNote"],
+};
+
+const essayReportSchema = {
+  type: "object", additionalProperties: false,
+  properties: {
+    summary: { type: "string" },
+    content: essayFeedbackSchema, language: essayFeedbackSchema, structure: essayFeedbackSchema,
+    handwriting: {
+      type: "object", additionalProperties: false,
+      properties: { ...essayFeedbackSchema.properties, assessable: { type: "boolean" } },
+      required: ["strength", "evidence", "improvement", "assessable"],
+    },
+    sentenceEdits: {
+      type: "array", items: {
+        type: "object", additionalProperties: false,
+        properties: {
+          original: { type: "string" }, suggested: { type: "string" },
+          issueType: { type: "string", enum: ["spelling", "grammar", "punctuation", "expression"] },
+          explanation: { type: "string" },
+        },
+        required: ["original", "suggested", "issueType", "explanation"],
+      },
+    },
+    polish: {
+      type: "array", items: {
+        type: "object", additionalProperties: false,
+        properties: { original: { type: "string" }, polished: { type: "string" }, reason: { type: "string" } },
+        required: ["original", "polished", "reason"],
+      },
+    },
+    references: {
+      type: "array", items: {
+        type: "object", additionalProperties: false,
+        properties: { purpose: { type: "string" }, example: { type: "string" }, usage: { type: "string" } },
+        required: ["purpose", "example", "usage"],
+      },
+    },
+    uncertaintyNote: { type: "string" },
+  },
+  required: ["summary", "content", "language", "structure", "handwriting", "sentenceEdits", "polish", "references", "uncertaintyNote"],
+};
+
 export type AnalyzedMistake = {
   pageNumber: number;
   question: string;
@@ -194,6 +250,26 @@ export async function analyzePages(images: Array<{ mime: string; base64: string 
   result.grading = result.grading.slice(0, 100).filter(item => item && Number.isInteger(item.pageNumber) && typeof item.questionLabel === "string" && ["correct", "incorrect", "uncertain"].includes(item.verdict));
   result.mistakes = result.mistakes.slice(0, 30).filter(item => item.question && item.reasoning && item.correctAnswer);
   return result;
+}
+
+export async function extractEssay(images: Array<{ mime: string; base64: string }>, promptHint: string): Promise<EssayExtraction> {
+  const content = [
+    { type: "input_text", text: `这些图片包含英语作文题目、学生手写原稿，可能还有教师批改。请只抄录题目要求和学生实际写出的英文作文，保持原有词序、拼写、大小写和标点；不要照着教师红笔修改原文，也不要替学生补词。按阅读顺序合并多张图片。无法辨认的词用 [看不清] 占位，并在 uncertainNote 中说明；如学生正文完全不可读，essayText 留空。teacherMarksNote 只概述明显可辨认的教师批注，不把它们混进 essayText。忽略姓名、班级、学号、二维码等个人信息，也不要输出。用户补充的题目要求（只作线索，照片上有冲突时待用户核对）：${promptHint.slice(0, 2000)}。` },
+    ...images.map(image => ({ type: "input_image", image_url: `data:${image.mime};base64,${image.base64}`, detail: "high" })),
+  ];
+  return parseEssayExtraction(await requestAi([{ role: "user", content }], "essay_extraction", essayExtractionSchema));
+}
+
+export async function analyzeEssay(input: {
+  confirmedText: string; promptText: string; gradeLevel: string;
+  images: Array<{ mime: string; base64: string }>;
+}): Promise<EssayReport> {
+  const content = [
+    { type: "input_text", text: `请依据用户确认的英语作文原文和题目要求，生成面向学生的作文分析。确认后的原文是唯一可信的学生文字；照片只用来辅助判断书写清晰度和教师已有批注。不能把批改笔迹、学生姓名、班级、二维码或照片上与原文无关的内容写进报告。题目要求：${input.promptText || "未提供，请勿臆造题目要求"}。年级：${input.gradeLevel || "未提供"}。确认后的原文：${input.confirmedText}。
+请分别点评内容覆盖、语言表达、篇章结构、书写可辨性；每项写一个具体优点、一条原文证据和下一步建议。书写看不清时 handwriting.assessable=false，其他字段可说明原因。不要给总分或等级。sentenceEdits 只列可确认的拼写、语法、标点及明显表达问题，original 必须从确认后的原文逐字引用，建议句保留原意；纯风格优化放在 polish，不作为错误。polish 选 2～3 处原句，仍需逐字引用，按原句、润色句、原因说明。references 给 1～3 条适合本题的开头、过渡或结尾参考表达，不能称为班级金句、不能虚构同学作品，不要生成可直接代交的整篇范文。若题目、某处字迹或评分条件不确定，在 uncertaintyNote 说明。全部说明文字用简体中文，英文例句保持英文。` },
+    ...input.images.map(image => ({ type: "input_image", image_url: `data:${image.mime};base64,${image.base64}`, detail: "high" })),
+  ];
+  return parseEssayReport(await requestAi([{ role: "user", content }], "essay_report", essayReportSchema), input.confirmedText);
 }
 
 export async function createSimilar(question: string, knowledgePoint: string, subject: string, count: number, previousQuestions: string[] = []): Promise<SimilarQuestion[]> {

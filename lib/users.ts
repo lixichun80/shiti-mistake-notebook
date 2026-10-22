@@ -252,6 +252,8 @@ export async function deleteUserRows(userId: string): Promise<void> {
     conn.prepare("DELETE FROM mistakes WHERE user_id = ?").bind(userId),
     conn.prepare("DELETE FROM uploads WHERE user_id = ?").bind(userId),
     conn.prepare("DELETE FROM practice_papers WHERE user_id = ?").bind(userId),
+    conn.prepare("DELETE FROM essay_reports WHERE user_id = ?").bind(userId),
+    conn.prepare("DELETE FROM knowledge_units WHERE user_id = ?").bind(userId),
     conn.prepare("DELETE FROM users WHERE id = ?").bind(userId),
   ]);
 }

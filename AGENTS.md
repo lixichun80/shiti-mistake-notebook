@@ -8,6 +8,8 @@
 单元名称（可填年级）并确认重点知识点，支持 3/5/10 题的固定出题结构，生成后保存到
 `practice_papers`，可在线作答、提交 AI 批改，也可下载题目与答案分开的 Word 文件。
 
+英语作文分析是独立入口：上传作文和题目照片，识别原文并由用户核对，再生成内容、语言、结构、书写点评、逐句批改、润色和佳句参考。作文不进入 `mistakes`。照片仅用于当次 AI 请求，不写入 R2；D1 `essay_reports` 只保存确认后的文字和报告。识别与分析接口走 `authenticateForAi()`，历史读取走 `authenticate()`，删除账号时清理报告记录。
+
 ## 技术栈
 
 - **vinext**（Next.js 风格的 RSC 框架，跑在 Cloudflare Workers 上）+ Vite 8 + React 19

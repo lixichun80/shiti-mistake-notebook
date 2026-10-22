@@ -50,6 +50,13 @@
       "when": 1792576805867,
       "tag": "0006_far_miracleman",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792661064154,
+      "tag": "0007_illegal_spectrum",
+      "breakpoints": true
     }
   ]
 }

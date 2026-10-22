@@ -9,6 +9,9 @@ const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTa
 const blueprintCode = ts.transpileModule(readFileSync(new URL("../lib/practice-blueprint.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
 const blueprintExports = {};
 vm.runInNewContext(blueprintCode, { exports: blueprintExports });
+const essayTypesCode = ts.transpileModule(readFileSync(new URL("../lib/essay-types.ts", import.meta.url), "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
+const essayTypesExports = {};
+vm.runInNewContext(essayTypesCode, { exports: essayTypesExports });
 
 function loadAi(output) {
   const exports = {};
@@ -20,6 +23,7 @@ function loadAi(output) {
   vm.runInNewContext(code, { exports, require: name => {
     if (name === "cloudflare:workers") return { env: { DEEPSEEK_API_KEY: "test-key" } };
     if (name === "@/lib/practice-blueprint") return blueprintExports;
+    if (name === "@/lib/essay-types") return essayTypesExports;
     throw new Error(`Unexpected import: ${name}`);
   }, fetch });
   return { exports, calls };
