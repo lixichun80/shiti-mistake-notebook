@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowRight, BookOpen, CheckCircle2, Lightbulb, LoaderCircle, Network, Sparkles } from "lucide-react";
+import { ArrowRight, BookOpen, CheckCircle2, ChevronDown, Lightbulb, LoaderCircle, Network, Sparkles } from "lucide-react";
 import { buildKnowledgeMap, type KnowledgeEvidence, type KnowledgeNode } from "@/lib/knowledge-map";
 import { knowledgeKey, normalizeKnowledgePoint, type KnowledgeGuide, type KnowledgeProfile } from "@/lib/knowledge-types";
 import type { PracticeSummary } from "@/lib/practice-types";
@@ -33,6 +33,9 @@ export default function KnowledgeMap({ mistakes, papers, initialSubject, initial
   const [selectedSubject, setSelectedSubject] = useState(initialSubject || "全部科目");
   const [selectedUnit, setSelectedUnit] = useState("全部单元");
   const [selectedId, setSelectedId] = useState(initialPoint ? knowledgeKey(initialSubject, initialPoint) : "");
+  const [openUnit, setOpenUnit] = useState("");
+  const [visibleByUnit, setVisibleByUnit] = useState<Record<string, number>>({});
+  const detailRef = useRef<HTMLElement>(null);
   const [profiles, setProfiles] = useState<KnowledgeProfile[]>([]);
   const [unitDrafts, setUnitDrafts] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -97,6 +100,17 @@ export default function KnowledgeMap({ mistakes, papers, initialSubject, initial
   ).slice(0, 3) : [];
   const focus = subjectNodes.slice(0, 3);
 
+  function selectPoint(node: KnowledgeNode, resetUnitFilter = false) {
+    if (resetUnitFilter) setSelectedUnit("全部单元");
+    setOpenUnit(unitFor(node));
+    setSelectedId(node.id);
+    // On phones the detail is below the catalog. The arrow must take the user there.
+    window.setTimeout(() => {
+      detailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      detailRef.current?.focus({ preventScroll: true });
+    }, 0);
+  }
+
   async function saveUnit() {
     if (!selected) return;
     const target = selected;
@@ -110,6 +124,7 @@ export default function KnowledgeMap({ mistakes, papers, initialSubject, initial
       const data = await response.json() as { profile?: KnowledgeProfile; error?: string };
       if (!response.ok || !data.profile) throw new Error(data.error || "单元归属保存失败");
       setProfiles(current => [...current.filter(item => knowledgeKey(item.subject, item.knowledgePoint) !== target.id), data.profile!]);
+      setOpenUnit(data.profile.unitName || unassigned);
       setUnitDrafts(current => { const next = { ...current }; delete next[target.id]; return next; });
     } catch (cause) { setError(cause instanceof Error ? cause.message : "单元归属保存失败"); }
     finally { setSaving(false); }
@@ -146,19 +161,22 @@ export default function KnowledgeMap({ mistakes, papers, initialSubject, initial
         {["全部科目", ...subjects].map(item => <button type="button" key={item} className={selectedSubject === item ? "active" : ""} onClick={() => { setSelectedSubject(item); setSelectedUnit("全部单元"); setSelectedId(""); }}>{item}</button>)}
       </div>
       <section className="knowledge-focus"><div className="section-heading"><div><span className="section-kicker">START HERE</span><h2>先弄懂这几个知识点</h2></div></div><div className="knowledge-focus-list">
-        {focus.map((node, index) => <button type="button" key={node.id} onClick={() => { setSelectedUnit("全部单元"); setSelectedId(node.id); }}><span>{String(index + 1).padStart(2, "0")}</span><strong>{node.name}</strong><small>{node.subject} · {node.total} 次错误 · {node.sessionCount} 次作业或练习</small><ArrowRight size={16} /></button>)}
+        {focus.map((node, index) => <button type="button" key={node.id} onClick={() => selectPoint(node, true)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{node.name}</strong><small>{node.subject} · {node.total} 次错误 · {node.sessionCount} 次作业或练习</small><ArrowRight size={16} /></button>)}
       </div></section>
       <div className="knowledge-workspace">
         <section className="knowledge-catalog" aria-label="按单元查看薄弱知识点"><div className="knowledge-catalog-head"><div><span className="section-kicker">UNIT VIEW</span><h2>按单元查找</h2></div><span>{subjectNodes.length} 个知识点</span></div>
-          <label className="knowledge-unit-filter">筛选单元<select value={selectedUnit} onChange={event => { setSelectedUnit(event.target.value); setSelectedId(""); }}><option>全部单元</option>{units.map(unit => <option key={unit}>{unit}</option>)}</select></label>
+          <label className="knowledge-unit-filter">筛选单元<select value={selectedUnit} onChange={event => { setSelectedUnit(event.target.value); setOpenUnit(event.target.value === "全部单元" ? "" : event.target.value); setSelectedId(""); }}><option>全部单元</option>{units.map(unit => <option key={unit}>{unit}</option>)}</select></label>
           {units.filter(unit => selectedUnit === "全部单元" || selectedUnit === unit).map(unit => {
             const items = visible.filter(node => unitFor(node) === unit);
-            return <div className="knowledge-unit-group" key={unit}><h3>{unit}<span>{items.length} 个知识点</span></h3>
-              {items.map(node => <button type="button" key={node.id} className={["knowledge-row", selected?.id === node.id ? "active" : ""].join(" ")} onClick={() => setSelectedId(node.id)}><span className={["knowledge-status-dot", node.priority].join(" ")} /><span className="knowledge-row-main"><strong>{node.name}</strong><small>{node.subject} · {node.sessionCount} 次作业或练习</small></span><span className="knowledge-row-count">{node.total} 次错</span><ArrowRight size={15} /></button>)}
+            const expanded = openUnit === unit;
+            const shown = Math.min(items.length, visibleByUnit[unit] || 8);
+            return <div className="knowledge-unit-group" key={unit}><button type="button" className="knowledge-unit-toggle" aria-expanded={expanded} onClick={() => setOpenUnit(expanded ? "" : unit)}><strong>{unit}</strong><span>{items.length} 个知识点</span><ChevronDown size={17} /></button>
+              {expanded && <div className="knowledge-unit-items">{items.slice(0, shown).map(node => <button type="button" key={node.id} className={["knowledge-row", selected?.id === node.id ? "active" : ""].join(" ")} onClick={() => selectPoint(node)}><span className={["knowledge-status-dot", node.priority].join(" ")} /><span className="knowledge-row-main"><strong>{node.name}</strong><small>{node.subject} · {node.sessionCount} 次作业或练习</small></span><span className="knowledge-row-count">{node.total} 次错</span><ArrowRight size={15} /></button>)}
+                {shown < items.length && <button type="button" className="knowledge-show-more" onClick={() => setVisibleByUnit(current => ({ ...current, [unit]: shown + 8 }))}>再显示 {Math.min(8, items.length - shown)} 个（共 {items.length} 个）</button>}</div>}
             </div>;
           })}
         </section>
-        <aside className="knowledge-detail knowledge-action-detail">
+        <aside className="knowledge-detail knowledge-action-detail" ref={detailRef} id="knowledge-point-detail" tabIndex={-1}>
           {selected && <><span className={["knowledge-priority", selected.priority].join(" ")}>{priorityLabel[selected.priority]}</span><h2>{selected.name}</h2><p className="knowledge-detail-subject">{selected.subject} · {selectedUnitName}{!selectedProfile?.unitName && selectedUnitName !== unassigned ? "（根据练习卷推测）" : ""}</p>
             <div className="knowledge-counts"><div><strong>{selected.total}</strong><span>错误记录</span></div><div><strong>{selected.sessionCount}</strong><span>不同作业或练习</span></div><div><strong>{selected.correctCount}</strong><span>练习做对记录</span></div></div>
             <div className="knowledge-unit-editor"><label htmlFor="knowledge-unit-name">确认所属单元</label><div><input id="knowledge-unit-name" list="known-knowledge-units" value={unitDraft} onChange={event => setUnitDrafts(current => ({ ...current, [selected.id]: event.target.value }))} maxLength={80} placeholder="手动填写单元名称" /><datalist id="known-knowledge-units">{units.filter(name => name !== unassigned).map(name => <option value={name} key={name} />)}</datalist><button type="button" onClick={saveUnit} disabled={saving || unitDraft.trim() === (selectedProfile?.unitName || "")}>{saving ? <LoaderCircle size={15} className="spin" /> : <CheckCircle2 size={15} />}保存</button></div><small>归属由你确认；留空可归入“待归类”。</small></div>

@@ -1,6 +1,6 @@
 /** Editable Word worksheet. Uses standard OOXML and an uncompressed ZIP, with no network or runtime dependencies. */
 import { parseMath, splitMathText, type MathNode } from "./math-notation";
-import { kindForQuestion, practiceKindLabels, type PracticeQuestionKind } from "./practice-blueprint";
+import { kindForQuestion, practiceFormatLabels, practiceKindLabels, type PracticeQuestionFormat, type PracticeQuestionKind } from "./practice-blueprint";
 export type WorksheetMistake = {
   subject: string;
   question: string;
@@ -12,6 +12,8 @@ export type WorksheetMistake = {
   sourceName: string;
   createdAt: string;
   similarQuestions: { question: string; answer: string; explanation: string }[];
+  visualQuestion?: boolean;
+  sourceImage?: { bytes: Uint8Array; width: number; height: number; fullPage: boolean; mime?: "image/jpeg" | "image/png" };
 };
 
 const encoder = new TextEncoder();
@@ -49,12 +51,19 @@ function paragraphs(value: string, style = "Normal"): string {
     )
     .join("");
 }
-function writingSpace(): string {
+function writingSpace(lines = 2): string {
   return Array.from(
-    { length: 3 },
+    { length: lines },
     () =>
-      '<w:p><w:pPr><w:spacing w:after="100" w:line="440" w:lineRule="auto"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:color="D9D9D9"/></w:pBdr></w:pPr><w:r><w:t> </w:t></w:r></w:p>',
+      '<w:p><w:pPr><w:spacing w:after="40" w:line="300" w:lineRule="auto"/><w:pBdr><w:bottom w:val="single" w:sz="4" w:color="D9D9D9"/></w:pBdr></w:pPr><w:r><w:t> </w:t></w:r></w:p>',
   ).join("");
+}
+function wordTable(headers: string[], rows: string[][]): string {
+  const width = Math.floor(8000 / headers.length);
+  const cell = (value: string) => `<w:tc><w:tcPr><w:tcW w:w="${width}" w:type="dxa"/><w:tcMar><w:top w:w="80" w:type="dxa"/><w:left w:w="110" w:type="dxa"/><w:bottom w:w="80" w:type="dxa"/><w:right w:w="110" w:type="dxa"/></w:tcMar><w:vAlign w:val="center"/></w:tcPr><w:p>${paragraphContent(value)}</w:p></w:tc>`;
+  const row = (values: string[]) => `<w:tr>${values.map(cell).join("")}</w:tr>`;
+  const border = '<w:top w:val="single" w:sz="4" w:color="D9D9D9"/><w:left w:val="single" w:sz="4" w:color="D9D9D9"/><w:bottom w:val="single" w:sz="4" w:color="D9D9D9"/><w:right w:val="single" w:sz="4" w:color="D9D9D9"/><w:insideH w:val="single" w:sz="4" w:color="D9D9D9"/><w:insideV w:val="single" w:sz="4" w:color="D9D9D9"/>';
+  return `<w:tbl><w:tblPr><w:tblW w:w="8000" w:type="dxa"/><w:tblLayout w:type="fixed"/><w:tblBorders>${border}</w:tblBorders></w:tblPr><w:tblGrid>${headers.map(() => `<w:gridCol w:w="${width}"/>`).join("")}</w:tblGrid>${row(headers)}${rows.map(row).join("")}</w:tbl>`;
 }
 const ns =
   'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"';
@@ -72,14 +81,14 @@ function crc32(bytes: Uint8Array): number {
 }
 
 /** ZIP store method keeps the generator small and is supported by Word/WPS. */
-function zip(entries: [string, string][]): Uint8Array<ArrayBuffer> {
+function zip(entries: [string, string | Uint8Array][]): Uint8Array<ArrayBuffer> {
   const files: Uint8Array[] = [];
   const directory: Uint8Array[] = [];
   let offset = 0;
   let directorySize = 0;
   for (const [path, content] of entries) {
     const name = encoder.encode(path);
-    const data = encoder.encode(content);
+    const data = typeof content === "string" ? encoder.encode(content) : content;
     const crc = crc32(data);
     const local = new Uint8Array(30 + name.length);
     const l = new DataView(local.buffer);
@@ -126,68 +135,99 @@ function zip(entries: [string, string][]): Uint8Array<ArrayBuffer> {
   return result;
 }
 
+function sourceDrawing(index: number, image: NonNullable<WorksheetMistake["sourceImage"]>, visual: boolean): string {
+  // A4 with 20 mm margins leaves roughly 6.7 in of usable width.
+  const maxWidth = 5_850_000;
+  const maxHeight = visual || image.fullPage ? 3_360_000 : 1_900_000;
+  const scale = Math.min(maxWidth / image.width, maxHeight / image.height);
+  const cx = Math.max(1, Math.round(image.width * scale));
+  const cy = Math.max(1, Math.round(image.height * scale));
+  return `<w:p><w:pPr><w:spacing w:before="40" w:after="40"/></w:pPr><w:r><w:drawing>` +
+    `<wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0">` +
+    `<wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${index}" name="原题图片 ${index}"/>` +
+    `<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">` +
+    `<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${index}" name="question-${index}.${image.mime === "image/png" ? "png" : "jpg"}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="rIdImage${index}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
+    `</pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>`;
+}
+
 export function makeMistakeDocx(
   item: WorksheetMistake,
 ): Uint8Array<ArrayBuffer> {
-  const parsedDate = new Date(item.createdAt);
-  const recorded = Number.isNaN(parsedDate.getTime())
-    ? ""
-    : parsedDate.toLocaleDateString("zh-CN");
+  return makeMistakesDocx([item]);
+}
+
+/** One editable worksheet for the selected mistakes, with one shared answer section. */
+export function makeMistakesDocx(items: WorksheetMistake[]): Uint8Array<ArrayBuffer> {
+  if (!items.length) throw new Error("请先选择错题");
+  const single = items.length === 1;
+  const first = items[0];
+  const parsedDate = new Date(first.createdAt);
+  const recorded = Number.isNaN(parsedDate.getTime()) ? "" : parsedDate.toLocaleDateString("zh-CN");
   const body = [
-    paragraphs("错题练习单", "Title"),
+    paragraphs(single ? "错题练习单" : `错题练习单 · ${items.length} 道`, "Title"),
     paragraphs(
-      [item.subject, item.knowledgePoint, recorded].filter(Boolean).join(" · "),
+      single ? [first.subject, first.knowledgePoint, recorded].filter(Boolean).join(" · ") : `${items.length} 道错题 · 题目与答案分开`,
       "Subtitle",
     ),
     paragraphs("姓名：________________    日期：________________", "Subtitle"),
-    paragraphs("一、原题", "Heading1"),
-    paragraphs(item.question),
-    ...(item.sourceName
-      ? [
-          paragraphs(
-            `来源：${item.sourceName} · 第 ${item.pageNumber} 页`,
-            "Subtitle",
-          ),
-        ]
-      : []),
-    writingSpace(),
-    ...(item.similarQuestions.length
-      ? [
-          paragraphs("二、举一反三", "Heading1"),
-          ...item.similarQuestions.flatMap((similar, index) => [
-            paragraphs(`练习 ${index + 1}`, "Heading2"),
-            paragraphs(similar.question),
-            writingSpace(),
-          ]),
-        ]
-      : []),
+    ...items.flatMap((item, itemIndex) => [
+      paragraphs(single ? "一、原题" : `第 ${itemIndex + 1} 道错题 · ${item.subject} · ${item.knowledgePoint || "未标注知识点"}`, "Heading1"),
+      paragraphs(item.question),
+      ...(item.sourceImage ? [
+        paragraphs(item.sourceImage.fullPage ? "原题整页图片（旧题未记录裁剪区域，请核对题号）" : "原题图片（含公式或图表）", "Subtitle"),
+        sourceDrawing(itemIndex + 1, item.sourceImage, Boolean(item.visualQuestion)),
+      ] : []),
+      ...(item.sourceName ? [paragraphs(`来源：${item.sourceName} · 第 ${item.pageNumber} 页`, "Subtitle")] : []),
+      writingSpace(2),
+      ...(item.similarQuestions.length ? [
+        paragraphs(single ? "二、举一反三" : "举一反三", "Heading1"),
+        ...item.similarQuestions.flatMap((similar, index) => [
+          paragraphs(`练习 ${index + 1}`, "Heading2"),
+          paragraphs(similar.question),
+          writingSpace(2),
+        ]),
+      ] : []),
+    ]),
     '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
     paragraphs("参考答案与解析", "Title"),
     paragraphs("完成练习后再核对答案。", "Subtitle"),
-    paragraphs("原题解析", "Heading1"),
-    paragraphs(`我的原答案：${item.incorrectAnswer || "未记录"}`),
-    paragraphs(`正确答案：${item.correctAnswer}`),
-    paragraphs(`解题思路：${item.reasoning || "未记录"}`),
-    ...item.similarQuestions.flatMap((similar, index) => [
-      paragraphs(`练习 ${index + 1}`, "Heading2"),
-      paragraphs(`答案：${similar.answer}`),
-      paragraphs(`解析：${similar.explanation || "未记录"}`),
+    ...items.flatMap((item, itemIndex) => [
+      paragraphs(single ? "原题解析" : `第 ${itemIndex + 1} 道错题 · ${item.subject} · ${item.knowledgePoint || "未标注知识点"}`, "Heading1"),
+      paragraphs(`我的原答案：${item.incorrectAnswer || "未记录"}`),
+      paragraphs(`正确答案：${item.correctAnswer}`),
+      paragraphs(`解题思路：${item.reasoning || "未记录"}`),
+      ...item.similarQuestions.flatMap((similar, index) => [
+        paragraphs(`练习 ${index + 1}`, "Heading2"),
+        paragraphs(`答案：${similar.answer}`),
+        paragraphs(`解析：${similar.explanation || "未记录"}`),
+      ]),
     ]),
     '<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="567" w:footer="567"/><w:pgNumType w:start="1"/></w:sectPr>',
   ].join("");
   const styles = `<w:styles ${ns}>
-    <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:sz w:val="24"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="360" w:lineRule="auto"/><w:widowControl/></w:pPr></w:pPrDefault></w:docDefaults>
+    <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:sz w:val="21"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="90" w:line="300" w:lineRule="auto"/><w:widowControl/></w:pPr></w:pPrDefault></w:docDefaults>
     <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
-    <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="240"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="100" w:after="130"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
     <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="666666"/><w:sz w:val="21"/></w:rPr></w:style>
-    <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:outlineLvl w:val="0"/><w:spacing w:before="280" w:after="180"/></w:pPr><w:rPr><w:b/><w:sz w:val="36"/></w:rPr></w:style>
-    <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:outlineLvl w:val="1"/><w:spacing w:before="180" w:after="120"/></w:pPr><w:rPr><w:b/><w:sz w:val="28"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:outlineLvl w:val="0"/><w:spacing w:before="170" w:after="80"/></w:pPr><w:rPr><w:b/><w:sz w:val="25"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:outlineLvl w:val="1"/><w:spacing w:before="110" w:after="50"/></w:pPr><w:rPr><w:b/><w:sz w:val="22"/></w:rPr></w:style>
     </w:styles>`;
+  const media = new Map<Uint8Array, string>();
+  const imageTargets = items.map((item, index) => {
+    if (!item.sourceImage) return "";
+    const prior = media.get(item.sourceImage.bytes);
+    if (prior) return prior;
+    const target = `media/question-${index + 1}.${item.sourceImage.mime === "image/png" ? "png" : "jpg"}`;
+    media.set(item.sourceImage.bytes, target);
+    return target;
+  });
   return zip([
     [
       "[Content_Types].xml",
       xml(
-        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>',
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension="jpg" ContentType="image/jpeg"/><Default Extension="png" ContentType="image/png"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>',
       ),
     ],
     [
@@ -204,7 +244,7 @@ export function makeMistakeDocx(
     [
       "word/_rels/document.xml.rels",
       xml(
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/></Relationships>',
+        `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdFooter" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footer" Target="footer1.xml"/>${imageTargets.map((target, index) => target ? `<Relationship Id="rIdImage${index + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${target}"/>` : "").join("")}</Relationships>`,
       ),
     ],
     [
@@ -213,6 +253,7 @@ export function makeMistakeDocx(
         `<w:ftr ${ns}><w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:rPr><w:sz w:val="18"/><w:color w:val="777777"/></w:rPr><w:t xml:space="preserve">拾题 · 第 </w:t></w:r><w:fldSimple w:instr="PAGE"><w:r><w:t>1</w:t></w:r></w:fldSimple><w:r><w:t xml:space="preserve"> 页</w:t></w:r></w:p></w:ftr>`,
       ),
     ],
+    ...[...media].map(([bytes, target]): [string, Uint8Array] => [`word/${target}`, bytes]),
   ]);
 }
 
@@ -228,24 +269,37 @@ export function mistakeDocxFilename(item: WorksheetMistake): string {
   );
 }
 
+export function mistakesDocxFilename(items: WorksheetMistake[]): string {
+  if (!items.length) throw new Error("请先选择错题");
+  if (items.length === 1) return mistakeDocxFilename(items[0]);
+  const subject = items.every(item => item.subject === items[0].subject) ? items[0].subject : "综合";
+  return `拾题-${subject}-${items.length}道错题练习`
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, "_").slice(0, 90).trim() + ".docx";
+}
+
 export type UnitWorksheet = {
   subject: string;
   unitName: string;
   gradeLevel: string;
-  questions: { question: string; answer: string; explanation: string; knowledgePoint: string; kind?: PracticeQuestionKind }[];
+  questions: { question: string; answer: string; explanation: string; knowledgePoint: string; kind?: PracticeQuestionKind; format?: PracticeQuestionFormat; options?: string[]; table?: { headers: string[]; rows: string[][] } }[];
 };
 
 /** A4 editable worksheet; answers start on a separate page. */
 export function makeUnitPaperDocx(paper: UnitWorksheet): Uint8Array<ArrayBuffer> {
-  const title = `${paper.subject} · ${paper.unitName}${paper.questions.length === 3 ? "概念小测" : "单元练习卷"}`;
+  if (paper.questions.some(item => !item.question.trim() || (item.format === "chart" && (!item.table?.headers.length || !item.table.rows.length)))) {
+    throw new Error("题目或图表数据不完整，无法导出完整试卷");
+  }
+  const title = `${paper.subject} · ${paper.unitName}单元练习卷`;
   const body = [
     paragraphs(title, "Title"),
     paragraphs([paper.gradeLevel, `${paper.questions.length} 道题`].filter(Boolean).join(" · "), "Subtitle"),
     paragraphs("姓名：________________    日期：________________    得分：________", "Subtitle"),
     paragraphs("请独立完成练习，答案和解析在文档后半部分。", "Normal"),
     ...paper.questions.flatMap((item, index) => [
-      paragraphs(`${index + 1}. 【${practiceKindLabels[kindForQuestion(item.kind)]}】${item.question}`, "Question"),
-      writingSpace(),
+      paragraphs(`${index + 1}. 【${item.format ? practiceFormatLabels[item.format] + " · " : ""}${practiceKindLabels[kindForQuestion(item.kind)]}】${item.question}`, "Question"),
+      ...(item.format === "chart" && item.table?.headers.length && item.table.rows.length ? [wordTable(item.table.headers, item.table.rows)] : []),
+      ...(item.format === "choice" && item.options?.length === 4 ? item.options.map((option, optionIndex) => paragraphs(`${"ABCD"[optionIndex]}. ${option}`)) : []),
+      writingSpace(item.format === "choice" ? 0 : item.format === "fill" ? 1 : 2),
     ]),
     '<w:p><w:r><w:br w:type="page"/></w:r></w:p>',
     paragraphs("参考答案与解析", "Title"),
@@ -257,11 +311,11 @@ export function makeUnitPaperDocx(paper: UnitWorksheet): Uint8Array<ArrayBuffer>
     '<w:sectPr><w:footerReference w:type="default" r:id="rIdFooter"/><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:header="567" w:footer="567"/></w:sectPr>',
   ].join("");
   const styles = `<w:styles ${ns}>
-    <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:sz w:val="24"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="160" w:line="360" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
+    <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="宋体"/><w:sz w:val="21"/><w:lang w:val="zh-CN" w:eastAsia="zh-CN"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="90" w:line="300" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
     <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>
-    <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="240"/></w:pPr><w:rPr><w:b/><w:sz w:val="40"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="100" w:after="130"/></w:pPr><w:rPr><w:b/><w:sz w:val="32"/></w:rPr></w:style>
     <w:style w:type="paragraph" w:styleId="Subtitle"><w:name w:val="Subtitle"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="666666"/><w:sz w:val="21"/></w:rPr></w:style>
-    <w:style w:type="paragraph" w:styleId="Question"><w:name w:val="Question"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="260" w:after="130"/></w:pPr><w:rPr><w:b/><w:sz w:val="27"/></w:rPr></w:style>
+    <w:style w:type="paragraph" w:styleId="Question"><w:name w:val="Question"/><w:basedOn w:val="Normal"/><w:pPr><w:keepNext/><w:spacing w:before="160" w:after="70"/></w:pPr><w:rPr><w:b/><w:sz w:val="23"/></w:rPr></w:style>
     </w:styles>`;
   return zip([
     ["[Content_Types].xml", xml('<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/footer1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml"/></Types>')],

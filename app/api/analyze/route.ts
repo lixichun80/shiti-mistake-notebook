@@ -46,9 +46,9 @@ export async function POST(request: Request) {
         .bind(uploadId, user.userId, analysis.subject.trim() || "其他", JSON.stringify(keys), JSON.stringify(files.map(file => file.name)), createdAt)];
       const saved = analysis.mistakes.map(item => {
         const id = crypto.randomUUID();
-        statements.push(env.DB!.prepare("INSERT INTO mistakes (id, upload_id, user_id, subject, question, incorrect_answer, correct_answer, reasoning, knowledge_point, page_number, source_name, similar_questions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-          .bind(id, uploadId, user.userId, analysis.subject.trim() || "其他", item.question.trim(), item.incorrectAnswer.trim(), item.correctAnswer.trim(), item.reasoning.trim(), item.knowledgePoint.trim(), Math.max(1, Math.min(files.length, item.pageNumber || 1)), files[Math.max(0, Math.min(files.length - 1, (item.pageNumber || 1) - 1))].name, "[]", createdAt));
-        return { id, ...item, subject: analysis.subject.trim() || "其他", sourceName: files[Math.max(0, Math.min(files.length - 1, (item.pageNumber || 1) - 1))].name, createdAt, similarQuestions: [] };
+        statements.push(env.DB!.prepare("INSERT INTO mistakes (id, upload_id, user_id, subject, question, question_bounds, incorrect_answer, correct_answer, reasoning, knowledge_point, page_number, source_name, similar_questions, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+          .bind(id, uploadId, user.userId, analysis.subject.trim() || "其他", item.question.trim(), JSON.stringify(item.questionBounds), item.incorrectAnswer.trim(), item.correctAnswer.trim(), item.reasoning.trim(), item.knowledgePoint.trim(), Math.max(1, Math.min(files.length, item.pageNumber || 1)), files[Math.max(0, Math.min(files.length - 1, (item.pageNumber || 1) - 1))].name, "[]", createdAt));
+        return { id, uploadId, ...item, subject: analysis.subject.trim() || "其他", sourceName: files[Math.max(0, Math.min(files.length - 1, (item.pageNumber || 1) - 1))].name, createdAt, similarQuestions: [] };
       });
       await env.DB.batch(statements);
       return Response.json({ uploadId, subject: analysis.subject, summary: analysis.summary, uncertainNote: analysis.uncertainNote, gradingMode: analysis.gradingMode, grading: analysis.grading, mistakes: saved });

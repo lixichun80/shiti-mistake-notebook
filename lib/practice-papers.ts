@@ -38,7 +38,7 @@ export function paperDetail(row: PracticePaperRow): PracticeDetail {
   const { questions, answers, grading } = parsePaper(row);
   return {
     ...paperSummary(row),
-    questions: questions.map(item => ({ question: item.question, knowledgePoint: item.knowledgePoint, kind: item.kind })),
+    questions: questions.map(item => ({ question: item.question, knowledgePoint: item.knowledgePoint, kind: item.kind, format: item.format, options: item.options, table: item.table })),
     answers, grading,
   };
 }

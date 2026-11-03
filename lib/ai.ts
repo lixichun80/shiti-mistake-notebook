@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import type { PracticeQuestion, PracticeVerdict } from "@/lib/practice-types";
 import { parseEssayExtraction, parseEssayReport, type EssayExtraction, type EssayReport } from "@/lib/essay-types";
 import type { KnowledgeGuide } from "@/lib/knowledge-types";
-import { practiceBlueprint, type PracticeQuestionKind } from "@/lib/practice-blueprint";
+import { practiceBlueprint, practiceFormatBlueprint, type PracticeQuestionKind } from "@/lib/practice-blueprint";
 
 type AiResponse = { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>; error?: { message?: string } };
 
@@ -61,12 +61,13 @@ const mistakeSchema = {
         properties: {
           pageNumber: { type: "integer" },
           question: { type: "string" },
+          questionBounds: { type: "array", items: { type: "integer" } },
           incorrectAnswer: { type: "string" },
           correctAnswer: { type: "string" },
           reasoning: { type: "string" },
           knowledgePoint: { type: "string" },
         },
-        required: ["pageNumber", "question", "incorrectAnswer", "correctAnswer", "reasoning", "knowledgePoint"],
+        required: ["pageNumber", "question", "questionBounds", "incorrectAnswer", "correctAnswer", "reasoning", "knowledgePoint"],
       },
     },
   },
@@ -109,8 +110,18 @@ const unitPaperSchema = {
           explanation: { type: "string" },
           knowledgePoint: { type: "string" },
           kind: { type: "string", enum: ["concept", "method", "misconception", "application", "synthesis"] },
+          format: { type: "string", enum: ["choice", "fill", "chart", "short"] },
+          options: { type: "array", items: { type: "string" } },
+          table: {
+            type: "object", additionalProperties: false,
+            properties: {
+              headers: { type: "array", items: { type: "string" } },
+              rows: { type: "array", items: { type: "array", items: { type: "string" } } },
+            },
+            required: ["headers", "rows"],
+          },
         },
-        required: ["question", "answer", "explanation", "knowledgePoint", "kind"],
+        required: ["question", "answer", "explanation", "knowledgePoint", "kind", "format", "options", "table"],
       },
     },
   },
@@ -207,6 +218,7 @@ const essayReportSchema = {
 export type AnalyzedMistake = {
   pageNumber: number;
   question: string;
+  questionBounds: number[];
   incorrectAnswer: string;
   correctAnswer: string;
   reasoning: string;
@@ -241,7 +253,7 @@ export async function analyzePages(images: Array<{ mime: string; base64: string 
   const input = [{
     role: "user",
     content: [
-      { type: "input_text", text: "请批改并分析这些试卷或作业图片。图片按传入顺序编号，从第 1 页开始。先判断科目，以及每页是否已有老师的批改标记：全都有则 gradingMode=marked，全都没有则 unmarked，两种都有则 mixed。逐题读取清晰可辨的题目和学生作答。已有批改标记的题，优先依据明确的红笔叉号、扣分、纠错等判定；不要把印刷的红色内容当成批改。没有批改标记的题，你要独立解题并将学生作答与正确答案逐题比较，给出 correct 或 incorrect。每道已作答且可辨认的题都写入 grading，questionLabel 用图片上的题号（没有题号则用简短题目描述），comment 简要说明判定依据。题目、作答、标准或评分规则不清楚，或存在合理的多种答案时，verdict=uncertain，不得臆断为错题；空白题也列为 uncertain，并在 comment 指出未作答。只有能够确认错误的题才写入 mistakes，且必须在 grading 中对应 incorrect。对每道错题完整抄录题意与学生错误答案，给出正确答案、面向学生的分步解题思路及核心知识点。不得编造看不清的文字、作答或批改结果；有遗漏或不确定情况在 uncertainNote 说明。summary 简述本次批改和分析结果。全部用简体中文。若无明确错题，mistakes 返回空数组。" },
+      { type: "input_text", text: "请批改并分析这些试卷或作业图片。图片按传入顺序编号，从第 1 页开始。先判断科目，以及每页是否已有老师的批改标记：全都有则 gradingMode=marked，全都没有则 unmarked，两种都有则 mixed。逐题读取清晰可辨的题目和学生作答。已有批改标记的题，优先依据明确的红笔叉号、扣分、纠错等判定；不要把印刷的红色内容当成批改。没有批改标记的题，你要独立解题并将学生作答与正确答案逐题比较，给出 correct 或 incorrect。每道已作答且可辨认的题都写入 grading，questionLabel 用图片上的题号（没有题号则用简短题目描述），comment 简要说明判定依据。题目、作答、标准或评分规则不清楚，或存在合理的多种答案时，verdict=uncertain，不得臆断为错题；空白题也列为 uncertain，并在 comment 指出未作答。只有能够确认错误的题才写入 mistakes，且必须在 grading 中对应 incorrect。对每道错题完整抄录题干、计算式、选项以及图表中的数据，不得只写“如图”或省略计算题题干；图形无法用文字完整表示时在题干中标明“见原题图片”。questionBounds 是该道题在对应原图中的完整题目区域 [左,上,右,下]，坐标均为 0 至 1000 的整数，包含图表和选项但尽量不含其他题目；无法可靠定位则返回空数组。给出学生错误答案、正确答案、面向学生的分步解题思路及核心知识点。不得编造看不清的文字、作答或批改结果；有遗漏或不确定情况在 uncertainNote 说明。summary 简述本次批改和分析结果。全部用简体中文。若无明确错题，mistakes 返回空数组。" },
       ...images.map(image => ({ type: "input_image", image_url: `data:${image.mime};base64,${image.base64}`, detail: "high" })),
     ],
   }];
@@ -249,6 +261,10 @@ export async function analyzePages(images: Array<{ mime: string; base64: string 
   if (!result || !Array.isArray(result.mistakes) || !Array.isArray(result.grading) || typeof result.subject !== "string") throw new Error("AI 返回的数据格式不完整");
   result.grading = result.grading.slice(0, 100).filter(item => item && Number.isInteger(item.pageNumber) && typeof item.questionLabel === "string" && ["correct", "incorrect", "uncertain"].includes(item.verdict));
   result.mistakes = result.mistakes.slice(0, 30).filter(item => item.question && item.reasoning && item.correctAnswer);
+  for (const item of result.mistakes) {
+    const bounds = item.questionBounds;
+    item.questionBounds = Array.isArray(bounds) && bounds.length === 4 && bounds.every(value => Number.isInteger(value) && value >= 0 && value <= 1000) && bounds[0] < bounds[2] && bounds[1] < bounds[3] ? bounds : [];
+  }
   return result;
 }
 
@@ -302,44 +318,69 @@ export async function createKnowledgeGuide(input: {
 }
 
 export async function createUnitPaper(input: {
-  subject: string; unitName: string; gradeLevel: string; count: 3 | 5 | 10;
+  subject: string; unitName: string; gradeLevel: string; count: number;
   focusPoints: string[];
   weakPoints: Array<{ name: string; count: number; example: string }>;
 }): Promise<PracticeQuestion[]> {
   const plan = practiceBlueprint(input.count);
+  const formats = practiceFormatBlueprint(input.count);
   const context = JSON.stringify(input.weakPoints.slice(0, 12));
-  const sequence = plan.map((kind, index) => `第${index + 1}题 kind=${kind}`).join("；");
-  const prompt = `请为${input.gradeLevel || "中小学"}${input.subject}的“${input.unitName}”单元生成恰好 ${input.count} 道全新的练习题。严格按顺序与题型蓝图出题：${sequence}。concept 考基础概念，method 考典型方法，misconception 考常见错误辨析，application 考迁移应用，synthesis 考综合运用；每题 kind 必须与对应编号一致。用户确认要覆盖的知识点：${JSON.stringify(input.focusPoints)}，每个点至少在一道题的 knowledgePoint 中使用原名称；如不属于该单元，不得悄悄换成其他知识点。其余题覆盖该单元主要内容。每题有独立可判定的答案和准确、简明的解析。不要照抄错题、重复题干、生成依赖缺失图片或材料才能作答的题。下面是该学生过去的错题线索（只可参考确属本单元的部分）：${context}。全部使用简体中文。`;
-  const result = await requestAi([{ role: "user", content: [{ type: "input_text", text: prompt }] }], "unit_practice_paper", unitPaperSchema) as { questions?: PracticeQuestion[] };
-  if (!Array.isArray(result?.questions) || result.questions.length !== input.count || result.questions.some((item, index) =>
-    !item || typeof item.question !== "string" || !item.question.trim() || item.question.length > 2500 ||
-    typeof item.answer !== "string" || !item.answer.trim() || item.answer.length > 1500 ||
-    typeof item.explanation !== "string" || !item.explanation.trim() || item.explanation.length > 3000 ||
-    typeof item.knowledgePoint !== "string" || !item.knowledgePoint.trim() || item.knowledgePoint.length > 100 ||
-    item.kind !== plan[index]
-  )) {
-    throw new Error("练习卷生成不完整，请重试");
+  const questions: PracticeQuestion[] = [];
+  // Ten questions per request keeps the model output manageable for a 30-question paper.
+  for (let start = 0; start < input.count; start += 10) {
+    const batchSize = Math.min(10, input.count - start);
+    const sequence = plan.slice(start, start + batchSize).map((kind, index) => {
+      const number = start + index + 1;
+      const focus = input.focusPoints[number - 1];
+      return `第${number}题 kind=${kind}, format=${formats[number - 1]}${focus ? `, knowledgePoint=${focus}` : ""}`;
+    }).join("；");
+    const prompt = `请为${input.gradeLevel || "中小学"}${input.subject}的“${input.unitName}”单元出一份共 ${input.count} 题练习卷中的第 ${start + 1} 至 ${start + batchSize} 题，本次只返回恰好 ${batchSize} 题。严格遵守以下编号顺序和字段：${sequence}。kind 是知识层次：concept 基础概念、method 典型方法、misconception 易错辨析、application 迁移应用、synthesis 综合运用。format 是作答题型：choice 四选一，options 恰好四项且每项是不带 A/B/C/D 前缀的选项文本，answer 只写正确选项的字母；fill 填空，题干包含明确的空格；chart 图表题，table.headers 为 2 至 5 列标题，table.rows 为 2 至 6 行同列数数据，学生必须利用表中数据作答；short 解答题。非选择题 options=[]；非图表题 table={"headers":[],"rows":[]}。图表题的题干应引用所给表格，不得依赖外部图片。题意完整，答案独立可判定，解析准确简明；不同题型与难度合理搭配，不照抄错题，不重复题干。确认的重点知识点：${JSON.stringify(input.focusPoints)}，指定在编号上的名称必须原样填入 knowledgePoint；其余题覆盖单元主要内容。不属于本单元的知识点不可偷偷替换。先前已生成的题干（不要重复）：${JSON.stringify(questions.map(item => item.question.slice(0, 180)))}。过去的错题线索（仅参考确属本单元的部分）：${context}。全部使用简体中文。`;
+    const result = await requestAi([{ role: "user", content: [{ type: "input_text", text: prompt }] }], "unit_practice_paper", unitPaperSchema) as { questions?: PracticeQuestion[] };
+    if (!Array.isArray(result?.questions) || result.questions.length !== batchSize || result.questions.some((item, index) => {
+      const expectedFormat = formats[start + index];
+      return !item || typeof item.question !== "string" || !item.question.trim() || item.question.length > 2500 ||
+        typeof item.answer !== "string" || !item.answer.trim() || item.answer.length > 1500 ||
+        typeof item.explanation !== "string" || !item.explanation.trim() || item.explanation.length > 3000 ||
+        typeof item.knowledgePoint !== "string" || !item.knowledgePoint.trim() || item.knowledgePoint.length > 100 ||
+        item.kind !== plan[start + index] || item.format !== expectedFormat ||
+        !Array.isArray(item.options) || !item.options.every(option => typeof option === "string" && !!option.trim() && option.length <= 300) ||
+        !item.table || !Array.isArray(item.table.headers) || !Array.isArray(item.table.rows) ||
+        (expectedFormat === "choice" ? item.options.length !== 4 || !/^[ABCD]$/i.test(item.answer.trim()) : item.options.length !== 0) ||
+        (expectedFormat === "chart"
+          ? item.table.headers.length < 2 || item.table.headers.length > 5 || item.table.rows.length < 2 || item.table.rows.length > 6 ||
+            !item.table.headers.every(cell => typeof cell === "string" && !!cell.trim() && cell.length <= 100) ||
+            !item.table.rows.every(row => Array.isArray(row) && row.length === item.table!.headers.length && row.every(cell => typeof cell === "string" && !!cell.trim() && cell.length <= 100))
+          : item.table.headers.length !== 0 || item.table.rows.length !== 0);
+    })) throw new Error("练习卷生成不完整，请重试");
+    questions.push(...result.questions);
   }
-  const normalizedQuestions = result.questions.map(item => item.question.trim().replace(/\s+/g, ""));
-  if (new Set(normalizedQuestions).size !== result.questions.length || input.focusPoints.some(point => !result.questions!.some(item => item.knowledgePoint.trim() === point))) {
+  const normalizedQuestions = questions.map(item => item.question.trim().replace(/\s+/g, ""));
+  if (new Set(normalizedQuestions).size !== questions.length || input.focusPoints.some(point => !questions.some(item => item.knowledgePoint.trim() === point))) {
     throw new Error("练习卷未覆盖所选知识点或存在重复题目，请重试");
   }
-  return result.questions.map(item => ({
+  return questions.map(item => ({
     question: item.question.trim(), answer: item.answer.trim(),
     explanation: item.explanation.trim(), knowledgePoint: item.knowledgePoint.trim(), kind: item.kind as PracticeQuestionKind,
+    format: item.format, options: item.options!.map(option => option.trim()),
+    table: { headers: item.table!.headers.map(cell => cell.trim()), rows: item.table!.rows.map(row => row.map(cell => cell.trim())) },
   }));
 }
 
 export async function gradeUnitPaper(questions: PracticeQuestion[], answers: string[]): Promise<Array<{ index: number; verdict: PracticeVerdict; comment: string }>> {
   const items = questions.map((item, index) => ({
-    index: index + 1, question: item.question, referenceAnswer: item.answer,
+    index: index + 1, question: item.question, options: item.options, table: item.table, referenceAnswer: item.answer,
     explanation: item.explanation, studentAnswer: answers[index] || "（未作答）",
   }));
-  const prompt = `请逐题批改学生对这份练习卷的作答。参考答案与解析是判定依据；等价表达也算正确。未作答判 incorrect；无法可靠判断的开放题判 uncertain。每题返回 1 开始的 index、correct/incorrect/uncertain 和简短具体的 comment。不要把未写出的步骤想象成学生已完成。题目数据：${JSON.stringify(items)}。`;
-  const result = await requestAi([{ role: "user", content: [{ type: "input_text", text: prompt }] }], "unit_practice_grading", practiceGradingSchema) as { grading?: Array<{ index: number; verdict: PracticeVerdict; comment: string }> };
-  const grading = result?.grading;
-  if (!Array.isArray(grading) || grading.length !== questions.length || new Set(grading.map(item => item.index)).size !== questions.length || grading.some(item => !Number.isInteger(item.index) || item.index < 1 || item.index > questions.length || !["correct", "incorrect", "uncertain"].includes(item.verdict) || typeof item.comment !== "string")) {
-    throw new Error("批改结果不完整，请重试");
+  const grading: Array<{ index: number; verdict: PracticeVerdict; comment: string }> = [];
+  for (let start = 0; start < items.length; start += 10) {
+    const batch = items.slice(start, start + 10);
+    const prompt = `请逐题批改学生对这份练习卷的作答，本批只含第 ${start + 1} 至 ${start + batch.length} 题。参考答案与解析是判定依据；等价表达也算正确，选择题依据选项字母判定。未作答判 incorrect；无法可靠判断的开放题判 uncertain。每题返回题目原有的 index、correct/incorrect/uncertain 和简短具体的 comment。不要把未写出的步骤想象成学生已完成。题目数据：${JSON.stringify(batch)}。`;
+    const result = await requestAi([{ role: "user", content: [{ type: "input_text", text: prompt }] }], "unit_practice_grading", practiceGradingSchema) as { grading?: Array<{ index: number; verdict: PracticeVerdict; comment: string }> };
+    const part = result?.grading;
+    if (!Array.isArray(part) || part.length !== batch.length || new Set(part.map(item => item.index)).size !== batch.length || part.some(item => !Number.isInteger(item.index) || item.index < start + 1 || item.index > start + batch.length || !["correct", "incorrect", "uncertain"].includes(item.verdict) || typeof item.comment !== "string")) {
+      throw new Error("批改结果不完整，请重试");
+    }
+    grading.push(...part);
   }
   return grading.sort((a, b) => a.index - b.index).map(item => answers[item.index - 1]?.trim()
     ? { index: item.index, verdict: item.verdict, comment: item.comment.trim().slice(0, 500) }

@@ -1,4 +1,6 @@
-import type { PracticeQuestionKind } from "@/lib/practice-blueprint";
+import type { PracticeQuestionFormat, PracticeQuestionKind } from "@/lib/practice-blueprint";
+
+export type PracticeTable = { headers: string[]; rows: string[][] };
 
 export type PracticeQuestion = {
   question: string;
@@ -6,9 +8,12 @@ export type PracticeQuestion = {
   explanation: string;
   knowledgePoint: string;
   kind?: PracticeQuestionKind;
+  format?: PracticeQuestionFormat;
+  options?: string[];
+  table?: PracticeTable;
 };
 
-export type PublicPracticeQuestion = Pick<PracticeQuestion, "question" | "knowledgePoint" | "kind">;
+export type PublicPracticeQuestion = Pick<PracticeQuestion, "question" | "knowledgePoint" | "kind" | "format" | "options" | "table">;
 
 export type PracticeVerdict = "correct" | "incorrect" | "uncertain";
 

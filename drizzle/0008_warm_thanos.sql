@@ -1,0 +1,1 @@
+ALTER TABLE `mistakes` ADD `question_bounds` text DEFAULT '' NOT NULL;

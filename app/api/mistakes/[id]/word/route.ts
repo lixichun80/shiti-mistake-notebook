@@ -1,8 +1,10 @@
 import { env } from "cloudflare:workers";
 import { authenticate } from "@/lib/api-guard";
 import { makeMistakeDocx, mistakeDocxFilename } from "@/lib/mistake-docx";
+import { isVisualQuestion, loadWordSourceImage, needsOriginalPicture } from "@/lib/word-source";
 
 type MistakeRow = {
+  upload_id: string;
   subject: string;
   question: string;
   incorrect_answer: string;
@@ -24,7 +26,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   try {
     const row = await env.DB.prepare(
-      "SELECT subject, question, incorrect_answer, correct_answer, reasoning, knowledge_point, page_number, source_name, created_at, similar_questions FROM mistakes WHERE id = ? AND user_id = ?",
+      "SELECT upload_id, subject, question, incorrect_answer, correct_answer, reasoning, knowledge_point, page_number, source_name, created_at, similar_questions FROM mistakes WHERE id = ? AND user_id = ?",
     ).bind((await params).id, auth.user.userId).first<MistakeRow>();
     if (!row) return Response.json({ error: "错题不存在" }, { status: 404 });
 
@@ -39,6 +41,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
       sourceName: row.source_name,
       createdAt: row.created_at,
       similarQuestions: JSON.parse(row.similar_questions || "[]") as { question: string; answer: string; explanation: string }[],
+      visualQuestion: isVisualQuestion(row.question),
+      ...(needsOriginalPicture(row.subject, row.question) ? { sourceImage: await loadWordSourceImage(auth.user.userId, row.upload_id, row.page_number) } : {}),
     };
     const bytes = makeMistakeDocx(item);
     const name = mistakeDocxFilename(item);

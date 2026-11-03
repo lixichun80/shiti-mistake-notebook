@@ -64,7 +64,7 @@ export default function EssayAnalysis({ trialExpired, aiReady, onTrialExpired }:
     let mounted = true;
     fetch("/api/essays").then(async response => {
       // Full navigation drops any confirmed draft after the session expires.
-      if (response.status === 401) { window.location.href = "/login"; return null; }
+      if (response.status === 401) { window.location.assign("/login"); return null; }
       if (!response.ok) throw new Error("作文记录加载失败，请刷新页面重试");
       return response.json() as Promise<{ essays: EssaySummary[] }>;
     }).then(data => { if (mounted && data) setHistory(data.essays); })
@@ -109,7 +109,7 @@ export default function EssayAnalysis({ trialExpired, aiReady, onTrialExpired }:
   }
 
   async function handleResponse(response: Response): Promise<Record<string, unknown> | null> {
-    if (response.status === 401) { window.location.href = "/login"; return null; }
+    if (response.status === 401) { window.location.assign("/login"); return null; }
     const data = await response.json() as Record<string, unknown>;
     if (data.code === "TRIAL_EXPIRED") onTrialExpired();
     if (!response.ok) throw new Error(typeof data.error === "string" ? data.error : "操作失败，请重试");

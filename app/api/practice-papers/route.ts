@@ -3,6 +3,7 @@ import { authenticate, authenticateForAi } from "@/lib/api-guard";
 import { aiConfigured, createUnitPaper } from "@/lib/ai";
 import { insertPracticePaper, listPracticePapers, paperDetail, paperSummary } from "@/lib/practice-papers";
 import { normalizeKnowledgePoint } from "@/lib/knowledge-types";
+import { validPracticeCount } from "@/lib/practice-blueprint";
 
 export const runtime = "edge";
 
@@ -37,9 +38,9 @@ export async function POST(request: Request) {
     ? [...new Set(rawPoints.map(point => normalizeKnowledgePoint(point as string)).filter(Boolean))]
     : null;
   if (!subject || subject.length > 30 || !unitName || unitName.length > 80 || gradeLevel.length > 30 ||
-    (count !== 3 && count !== 5 && count !== 10) || !focusPoints || focusPoints.length > Math.min(count, 4) ||
+    !validPracticeCount(count) || !focusPoints || focusPoints.length > Math.min(validPracticeCount(count) ? count : 0, 4) ||
     focusPoints.some(point => point.length > 100)) {
-    return fail("请填写科目与单元名称，选择 3、5 或 10 道题，并确认最多 4 个知识点", 400);
+    return fail("请填写科目与单元名称，设置 1 到 30 道题，并确认最多 4 个知识点", 400);
   }
 
   try {

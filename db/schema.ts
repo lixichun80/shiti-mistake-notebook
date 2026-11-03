@@ -42,6 +42,8 @@ export const mistakes = sqliteTable("mistakes", {
   userId: text("user_id").notNull(),
   subject: text("subject").notNull(),
   question: text("question").notNull(),
+  // 题目在原图上的区域，千分比坐标 [left, top, right, bottom]；旧数据留空。
+  questionBounds: text("question_bounds").notNull().default(""),
   incorrectAnswer: text("incorrect_answer").notNull(),
   correctAnswer: text("correct_answer").notNull(),
   reasoning: text("reasoning").notNull(),
