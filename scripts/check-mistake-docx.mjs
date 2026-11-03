@@ -72,6 +72,12 @@ writeFileSync(new URL(`../outputs/${imageFile}`, import.meta.url), exports.makeM
   ...fixture, similarQuestions: [], visualQuestion: true,
   sourceImage: { bytes: chartBytes, width: 640, height: 350, fullPage: false },
 }]));
+const pngFile = "mistake-with-png.docx";
+const pngBytes = readFileSync(new URL("./fixtures/homework-grading.png", import.meta.url));
+writeFileSync(new URL(`../outputs/${pngFile}`, import.meta.url), exports.makeMistakesDocx([{
+  ...fixture, similarQuestions: [], visualQuestion: true,
+  sourceImage: { bytes: pngBytes, width: pngBytes.readUInt32BE(16), height: pngBytes.readUInt32BE(20), fullPage: true, mime: "image/png" },
+}]));
 const unitFile = "unit-practice-blueprint.docx";
 writeFileSync(new URL(`../outputs/${unitFile}`, import.meta.url), exports.makeUnitPaperDocx({
   subject: "数学", unitName: "根式与分数", gradeLevel: "八年级",
@@ -113,7 +119,7 @@ for i, path in enumerate(sys.argv[1:]):
         assert '我的原答案：-17' in text and '正确答案：1' in text
         assert '\x00' not in text
         assert len(doc.findall('.//w:br[@w:type="page"]', ns)) == 1
-        assert len(doc.findall('.//w:pBdr', ns)) == (2 if i in (1, 3) else 8 if i == 2 else 6)
+        assert len(doc.findall('.//w:pBdr', ns)) == (2 if i in (1, 3, 5) else 8 if i == 2 else 6)
         assert ('二、举一反三' in text) == (i == 0)
         if i == 2:
             assert '第二道独立错题：选择正确时态。' in text
@@ -124,12 +130,15 @@ for i, path in enumerate(sys.argv[1:]):
             assert len(doc.findall('.//w:drawing', ns)) == 1
             assert z.read('word/media/question-1.jpg')[:2] == b'\xff\xd8'
             assert doc.find('.//wp:extent', ns) is not None
+        if i == 5:
+            assert len(doc.findall('.//w:drawing', ns)) == 1
+            assert z.read('word/media/question-1.png')[:8] == b'\x89PNG\r\n\x1a\n'
         assert doc.find('.//w:pgSz', ns).get('{'+ns['w']+'}w') == '11906'
         footer = ET.fromstring(z.read('word/footer1.xml'))
         assert footer.find('.//w:fldSimple', ns).get('{'+ns['w']+'}instr') == 'PAGE'
         rels = ET.fromstring(z.read('word/_rels/document.xml.rels'))
         for rel in rels: assert posixpath.normpath('word/'+rel.get('Target')) in z.namelist()
-        if i == 3: assert any(rel.get('Type', '').endswith('/image') for rel in rels)
+        if i in (3, 5): assert any(rel.get('Type', '').endswith('/image') for rel in rels)
 print('PASS: ZIP/CRC, OOXML parts and relationships, Chinese/math/XML escaping, long text, page break, A4, writing space, answer key and page fields.')
 `;
 const result = spawnSync(
@@ -137,7 +146,7 @@ const result = spawnSync(
   [
     "-c",
     python,
-    ...[...files, batchFile, imageFile, unitFile].map((name) =>
+    ...[...files, batchFile, imageFile, unitFile, pngFile].map((name) =>
       fileURLToPath(new URL(`../outputs/${name}`, import.meta.url)),
     ),
   ],
